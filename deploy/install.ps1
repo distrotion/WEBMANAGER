@@ -58,7 +58,7 @@ if (Test-Path "$RepoDir\ui\build\web\index.html") {
   Info "copying built UI"
   robocopy "$RepoDir\ui\build\web" "$Root\app\ui\build\web" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
 } else {
-  Warn "UI build not found at $RepoDir\ui\build\web — run 'flutter build web --release' in ui\ then re-copy."
+  Warn "UI build not found at $RepoDir\ui\build\web - run 'flutter build web --release' in ui\ then re-copy."
 }
 
 # 3. backend .env + npm install --------------------------------------------
@@ -85,7 +85,7 @@ Pop-Location
 
 # 4. nginx.conf -------------------------------------------------------------
 # NOTE: the manager GENERATES nginx\conf\nginx.conf (absolute paths, both config
-# layers) on every startup via bootstrapPrefix() — no need to copy a template.
+# layers) on every startup via bootstrapPrefix() - no need to copy a template.
 # renewal hook used by win-acme
 $reloadLines = @(
   '@echo off',
@@ -96,7 +96,7 @@ Set-Content -Encoding ASCII -Path "$Root\tools\reload-nginx.cmd" -Value $reloadL
 # 5. NSSM services (auto-start on boot + auto-restart on crash) --------------
 $nssm = "$Root\tools\nssm.exe"
 if (-not (Test-Path $nssm)) {
-  Warn "nssm.exe not found at $nssm — download it, then re-run this installer."
+  Warn "nssm.exe not found at $nssm - download it, then re-run this installer."
 } else {
   Info "registering 'wm-manager' service (auto-start)"
   $node = (Get-Command node).Source
@@ -121,7 +121,7 @@ if (-not (Test-Path $nssm)) {
     # boot order: manager must run first (it generates nginx.conf) before nginx starts
     & $nssm set nginx DependOnService wm-manager
     & $nssm set nginx DisplayName "WEBMANAGER nginx"
-  } else { Warn "nginx.exe not found at $Root\nginx — extract nginx there first, then re-run." }
+  } else { Warn "nginx.exe not found at $Root\nginx - extract nginx there first, then re-run." }
 
   Info "starting services now (manager first, then nginx)"
   & $nssm start wm-manager 2>$null
@@ -137,10 +137,10 @@ function Allow-Port([string]$name, [int]$port, [string]$remote = "Any") {
 }
 Allow-Port "WEBMANAGER http"  80
 Allow-Port "WEBMANAGER https" 443
-# Manager panel: restrict to LAN by default — edit remoteip to your admin subnet/VPN.
+# Manager panel: restrict to LAN by default - edit remoteip to your admin subnet/VPN.
 Allow-Port "WEBMANAGER panel" $ManagerPort "LocalSubnet"
-Warn "Panel port $ManagerPort is allowed from LocalSubnet only — adjust the 'WEBMANAGER panel' rule for your network."
-Warn "Direct app ports (9500, 7500, ...) are NOT opened here — add rules per site if you expose them."
+Warn "Panel port $ManagerPort is allowed from LocalSubnet only - adjust the 'WEBMANAGER panel' rule for your network."
+Warn "Direct app ports (9500, 7500, ...) are NOT opened here - add rules per site if you expose them."
 
 # 7. Verify -----------------------------------------------------------------
 Write-Host ""
@@ -151,4 +151,4 @@ Write-Host ""
 Info "done. Manager:  http://localhost:$ManagerPort   (admin / $AdminPass)"
 Info "Services are set to AUTO-START on boot and auto-restart on crash."
 Info "Control anytime with:  scripts\start.ps1 / scripts\stop.ps1  (or 'net start/stop wm-manager')."
-Info "JWT secret written to backend\.env — keep it safe."
+Info "JWT secret written to backend\.env - keep it safe."
