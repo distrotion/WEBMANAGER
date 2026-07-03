@@ -38,7 +38,11 @@ function Info($m){ Write-Host "[install] $m" -ForegroundColor Cyan }
 function Warn($m){ Write-Host "[warn]    $m" -ForegroundColor Yellow }
 
 if ([string]::IsNullOrWhiteSpace($JwtSecret)) {
-  $JwtSecret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+  # Works on Windows PowerShell 5.1 (.NET Framework) and PowerShell 7 alike.
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $bytes = New-Object 'System.Byte[]' 32
+  $rng.GetBytes($bytes)
+  $JwtSecret = [Convert]::ToBase64String($bytes)
 }
 
 # 1. Folder structure -------------------------------------------------------

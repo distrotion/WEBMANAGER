@@ -1,6 +1,22 @@
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+// Load backend/.env into process.env (no dependency). Real env vars (inline or
+// set by NSSM) win — .env only fills what isn't already set.
+(() => {
+  try {
+    const envPath = path.join(__dirname, '..', '.env');
+    if (!fs.existsSync(envPath)) return;
+    for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+    }
+  } catch {
+    /* ignore malformed .env */
+  }
+})();
 
 // On Windows Server this is D:\webmanager. For local dev it falls back to ~/webmanager-dev.
 const ROOT =
