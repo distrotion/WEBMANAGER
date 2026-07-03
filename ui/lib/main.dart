@@ -325,29 +325,58 @@ class _SitesPageState extends State<SitesPage> {
   }
 }
 
-// ---------------- Create site ----------------
+// ---------------- Create / edit site ----------------
 class CreateSiteDialog extends StatefulWidget {
-  const CreateSiteDialog({super.key});
+  final Map<String, dynamic>? site; // non-null = edit an existing site
+  const CreateSiteDialog({super.key, this.site});
   @override
   State<CreateSiteDialog> createState() => _CreateSiteDialogState();
 }
 
 class _CreateSiteDialogState extends State<CreateSiteDialog> {
-  // Prefill from remembered config so repeat entries don't need re-typing.
   static Map<String, dynamic> get _cfg => Api.instance.cfg;
+  bool get _editing => widget.site != null;
+
   final _name = TextEditingController();
   final _repo = TextEditingController();
   final _local = TextEditingController();
-  final _branch = TextEditingController(text: _cfg['branch'] ?? 'main');
+  final _branch = TextEditingController();
   final _port = TextEditingController();
   final _subdomain = TextEditingController();
-  final _domain = TextEditingController(text: _cfg['domain'] ?? '');
+  final _domain = TextEditingController();
   final _path = TextEditingController();
-  late String _runtime = _cfg['runtime'] ?? 'static';
-  late String _source = _cfg['source_type'] ?? 'git';
-  late String _exposure = _cfg['exposure_mode'] ?? 'subdomain';
+  late String _runtime;
+  late String _source;
+  late String _exposure;
   String? _error;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.site;
+    if (s != null) {
+      // editing → prefill from the site
+      _name.text = s['name'] ?? '';
+      _repo.text = s['repo_url'] ?? '';
+      _local.text = s['local_path'] ?? '';
+      _branch.text = s['branch'] ?? 'main';
+      _port.text = s['direct_port']?.toString() ?? '';
+      _subdomain.text = s['subdomain'] ?? '';
+      _domain.text = s['domain'] ?? '';
+      _path.text = s['path'] ?? '';
+      _runtime = s['runtime'] ?? 'static';
+      _source = s['source_type'] ?? 'git';
+      _exposure = s['exposure_mode'] ?? 'subdomain';
+    } else {
+      // creating → prefill from remembered config
+      _branch.text = _cfg['branch'] ?? 'main';
+      _domain.text = _cfg['domain'] ?? '';
+      _runtime = _cfg['runtime'] ?? 'static';
+      _source = _cfg['source_type'] ?? 'git';
+      _exposure = _cfg['exposure_mode'] ?? 'subdomain';
+    }
+  }
 
   Future<void> _save() async {
     setState(() {
@@ -355,19 +384,24 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _error = null;
     });
     try {
-      await Api.instance.createSite({
+      final body = {
         'name': _name.text.trim(),
         'runtime': _runtime,
         'source_type': _source,
-        if (_source == 'git' && _repo.text.trim().isNotEmpty) 'repo_url': _repo.text.trim(),
-        if (_source == 'local' && _local.text.trim().isNotEmpty) 'local_path': _local.text.trim(),
+        'repo_url': _source == 'git' ? _repo.text.trim() : null,
+        'local_path': _source == 'local' ? _local.text.trim() : null,
         'branch': _branch.text.trim(),
-        if (_port.text.trim().isNotEmpty) 'direct_port': int.tryParse(_port.text.trim()),
+        'direct_port': _port.text.trim().isNotEmpty ? int.tryParse(_port.text.trim()) : null,
         'exposure_mode': _exposure,
-        if (_exposure == 'subdomain') 'subdomain': _subdomain.text.trim(),
-        if (_exposure == 'path') 'domain': _domain.text.trim(),
-        if (_exposure == 'path') 'path': _path.text.trim(),
-      });
+        'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
+        'domain': _exposure == 'path' ? _domain.text.trim() : null,
+        'path': _exposure == 'path' ? _path.text.trim() : null,
+      };
+      if (_editing) {
+        await Api.instance.updateSite(widget.site!['id'], body);
+      } else {
+        await Api.instance.createSite(body);
+      }
       // remember these as defaults for the next site
       await Api.instance.saveCfg({
         'runtime': _runtime,
@@ -387,14 +421,21 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('New site'),
+      title: Text(_editing ? 'Edit site' : 'New site'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name (unique)')),
+              TextField(
+                controller: _name,
+                readOnly: _editing, // name is the key — can't rename
+                decoration: InputDecoration(
+                  labelText: 'Name (unique)',
+                  helperText: _editing ? 'name cannot be changed' : null,
+                ),
+              ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _runtime,
@@ -484,7 +525,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
           onPressed: _busy ? null : _save,
           child: _busy
               ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Create'),
+              : Text(_editing ? 'Save' : 'Create'),
         ),
       ],
     );
@@ -549,7 +590,26 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     final portOn = s['direct_port_enabled'] == 1;
 
     return Scaffold(
-      appBar: AppBar(title: Text(s['name'])),
+      appBar: AppBar(
+        title: Text(s['name']),
+        actions: [
+          IconButton(
+            tooltip: 'Edit settings',
+            icon: const Icon(Icons.edit),
+            onPressed: () async {
+              final saved = await showDialog<bool>(
+                context: context,
+                builder: (_) => CreateSiteDialog(site: s),
+              );
+              if (saved == true) {
+                final fresh = await Api.instance.sites();
+                final updated = fresh.firstWhere((e) => e['id'] == s['id'], orElse: () => s);
+                setState(() => s = updated);
+              }
+            },
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

@@ -196,6 +196,12 @@ class Api {
     return jsonDecode(r.body);
   }
 
+  Future<Map<String, dynamic>> updateSite(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/sites/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+    return jsonDecode(r.body);
+  }
+
   Future<void> deleteSite(int id) async {
     await http.delete(_u('/api/sites/$id'), headers: _headers);
   }
