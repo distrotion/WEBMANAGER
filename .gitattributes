@@ -1,0 +1,7 @@
+# Windows scripts must use CRLF so Windows PowerShell / cmd parse them correctly.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Keep shell scripts LF for macOS/Linux.
+*.sh text eol=lf

@@ -63,18 +63,20 @@ if (Test-Path "$RepoDir\ui\build\web\index.html") {
 
 # 3. backend .env + npm install --------------------------------------------
 Info "writing backend\.env"
-@"
-WEBMANAGER_ROOT=$Root
-PORT=$ManagerPort
-JWT_SECRET=$JwtSecret
-ADMIN_USER=admin
-ADMIN_PASS=$AdminPass
-MANAGER_UI=$Root\app\ui\build\web
-NGINX_EXE=$Root\nginx\nginx.exe
-NGINX_PREFIX=$Root\nginx
-NSSM_EXE=$Root\tools\nssm.exe
-WACS_EXE=$Root\tools\win-acme\wacs.exe
-"@ | Set-Content -Encoding ASCII "$Root\app\backend\.env"
+# Built as an array (not a here-string) so it parses under any line ending.
+$envLines = @(
+  "WEBMANAGER_ROOT=$Root",
+  "PORT=$ManagerPort",
+  "JWT_SECRET=$JwtSecret",
+  "ADMIN_USER=admin",
+  "ADMIN_PASS=$AdminPass",
+  "MANAGER_UI=$Root\app\ui\build\web",
+  "NGINX_EXE=$Root\nginx\nginx.exe",
+  "NGINX_PREFIX=$Root\nginx",
+  "NSSM_EXE=$Root\tools\nssm.exe",
+  "WACS_EXE=$Root\tools\win-acme\wacs.exe"
+)
+Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 
 Info "npm install (backend)"
 Push-Location "$Root\app\backend"
@@ -85,10 +87,11 @@ Pop-Location
 # NOTE: the manager GENERATES nginx\conf\nginx.conf (absolute paths, both config
 # layers) on every startup via bootstrapPrefix() — no need to copy a template.
 # renewal hook used by win-acme
-@"
-@echo off
-"$Root\nginx\nginx.exe" -p "$Root\nginx" -s reload
-"@ | Set-Content -Encoding ASCII "$Root\tools\reload-nginx.cmd"
+$reloadLines = @(
+  '@echo off',
+  "`"$Root\nginx\nginx.exe`" -p `"$Root\nginx`" -s reload"
+)
+Set-Content -Encoding ASCII -Path "$Root\tools\reload-nginx.cmd" -Value $reloadLines
 
 # 5. NSSM services (auto-start on boot + auto-restart on crash) --------------
 $nssm = "$Root\tools\nssm.exe"
