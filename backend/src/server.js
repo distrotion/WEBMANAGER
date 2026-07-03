@@ -22,6 +22,7 @@ app.use(express.json());
 app.get('/api/health', (req, res) => res.json({ ok: true, root: config.ROOT }));
 
 app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/users', authMiddleware, require('./routes/users.routes'));
 app.use('/api/system', authMiddleware, require('./routes/system.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
@@ -33,6 +34,13 @@ const uiDir =
   process.env.MANAGER_UI ||
   path.join(__dirname, '..', '..', 'ui', 'build', 'web');
 if (fs.existsSync(path.join(uiDir, 'index.html'))) {
+  // Never cache the app shell / bootstrap so a redeploy is picked up immediately.
+  app.use((req, res, next) => {
+    if (/\/(index\.html)?$|flutter_bootstrap\.js|flutter_service_worker\.js/.test(req.path)) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+    next();
+  });
   app.use(express.static(uiDir));
   app.get(/^(?!\/api|\/ws).*/, (req, res) => res.sendFile(path.join(uiDir, 'index.html')));
   console.log(`[webmanager] serving UI from ${uiDir}`);
@@ -41,7 +49,25 @@ if (fs.existsSync(path.join(uiDir, 'index.html'))) {
 }
 
 const server = http.createServer(app);
-logbus.attach(server);
+
+// Route WebSocket upgrades by path: /ws = live logs, /pty = interactive shell.
+const logWss = logbus.makeWss();
+const ptyWss = require('./pty').makeWss();
+server.on('upgrade', (req, socket, head) => {
+  let pathname;
+  try {
+    pathname = new URL(req.url, 'http://localhost').pathname;
+  } catch {
+    return socket.destroy();
+  }
+  if (pathname === '/ws') {
+    logWss.handleUpgrade(req, socket, head, (ws) => logWss.emit('connection', ws, req));
+  } else if (pathname === '/pty') {
+    ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
+  } else {
+    socket.destroy();
+  }
+});
 
 server.listen(config.PORT, () => {
   console.log(`[webmanager] API on :${config.PORT}  (root=${config.ROOT})`);

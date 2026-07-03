@@ -38,6 +38,7 @@ dependencies:
   web_socket_channel: ^3.0.1
   url_launcher: ^6.3.1
   shared_preferences: ^2.3.2
+  xterm: ^4.0.0
 
 dev_dependencies:
   flutter_test:

@@ -4,10 +4,15 @@ import 'api.dart';
 import 'console.dart';
 import 'requirements.dart';
 import 'folder_picker.dart';
+import 'users.dart';
+import 'shell_console.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Api.instance.restore(); // remember previous login across refreshes
+  // Restore remembered login — never let a storage hiccup blank the whole app.
+  try {
+    await Api.instance.restore();
+  } catch (_) {}
   runApp(const WebManagerApp());
 }
 
@@ -179,17 +184,39 @@ class _SitesPageState extends State<SitesPage> {
             icon: const Icon(Icons.fact_check),
           ),
           IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: () async {
-              await Api.instance.logout();
-              if (context.mounted) {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const AuthGate()),
-                );
+          PopupMenuButton<String>(
+            tooltip: 'Account',
+            icon: const Icon(Icons.account_circle),
+            onSelected: (v) async {
+              if (v == 'users') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UsersPage()));
+              } else if (v == 'shell') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
+              } else if (v == 'password') {
+                await showDialog(context: context, builder: (_) => const _ChangePasswordDialog());
+              } else if (v == 'logout') {
+                await Api.instance.logout();
+                if (context.mounted) {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (_) => const AuthGate()),
+                  );
+                }
               }
             },
-            icon: const Icon(Icons.logout),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                enabled: false,
+                child: Text('${Api.instance.username} · ${Api.instance.role}',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const PopupMenuDivider(),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'users', child: ListTile(leading: Icon(Icons.group), title: Text('Users'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
+              const PopupMenuItem(value: 'password', child: ListTile(leading: Icon(Icons.password), title: Text('Change password'), dense: true)),
+              const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout), title: Text('Logout'), dense: true)),
+            ],
           ),
         ],
       ),
@@ -547,6 +574,12 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
                   setState(() => s['direct_port_enabled'] = portOn ? 0 : 1);
                 }),
               _btn('Reload nginx', Icons.refresh, () => _act('reload')),
+              if (Api.instance.isAdmin)
+                _btn('Console', Icons.terminal, () {
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => ShellConsolePage(site: s['name'], title: 'Console · ${s['name']}'),
+                  ));
+                }),
               _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
               _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
               _btn('Delete', Icons.delete, _confirmDelete, danger: true),
@@ -601,5 +634,65 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
             label: Text(label, style: const TextStyle(color: Colors.redAccent)),
           )
         : FilledButton.tonalIcon(onPressed: onTap, icon: Icon(icon, size: 18), label: Text(label));
+  }
+}
+
+// Self-service password change for the logged-in user.
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _current = TextEditingController();
+  final _next = TextEditingController();
+  String? _msg;
+  bool _busy = false;
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _msg = null;
+    });
+    try {
+      await Api.instance.changeMyPassword(_current.text, _next.text);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password changed.')));
+      }
+    } catch (e) {
+      setState(() => _msg = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change my password'),
+      content: SizedBox(
+        width: 340,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: _current, obscureText: true, decoration: const InputDecoration(labelText: 'Current password')),
+          const SizedBox(height: 8),
+          TextField(controller: _next, obscureText: true, decoration: const InputDecoration(labelText: 'New password (min 4)')),
+          if (_msg != null) ...[
+            const SizedBox(height: 10),
+            Text(_msg!, style: const TextStyle(color: Colors.redAccent)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _busy ? null : _save,
+          child: _busy
+              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Change'),
+        ),
+      ],
+    );
   }
 }

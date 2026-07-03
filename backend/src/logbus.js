@@ -13,8 +13,8 @@ function emitLog(channel, line) {
   bus.emit('log', { channel, line, t: Date.now() });
 }
 
-function attach(server) {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+function makeWss() {
+  const wss = new WebSocketServer({ noServer: true });
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
@@ -39,4 +39,4 @@ function attach(server) {
   return wss;
 }
 
-module.exports = { emitLog, attach, bus };
+module.exports = { emitLog, makeWss, bus };

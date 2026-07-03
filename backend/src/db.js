@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT,
   time   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
 `);
 
 // Lightweight migrations for DBs created before a column existed.

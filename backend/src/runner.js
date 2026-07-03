@@ -4,9 +4,11 @@ const { emitLog } = require('./logbus');
 
 // Spawn a command and stream stdout/stderr line-by-line to the given log channel.
 // Resolves with { code, out } — never rejects, so callers can branch on exit code.
-function run(cmd, args, { cwd, channel = 'system', env } = {}) {
+// `redact` (a secret string) is masked in everything shown/streamed to the log.
+function run(cmd, args, { cwd, channel = 'system', env, redact } = {}) {
+  const mask = (s) => (redact ? s.split(redact).join('***') : s);
   return new Promise((resolve) => {
-    emitLog(channel, `$ ${cmd} ${args.join(' ')}`);
+    emitLog(channel, mask(`$ ${cmd} ${args.join(' ')}`));
     let child;
     try {
       child = spawn(cmd, args, {
@@ -15,14 +17,14 @@ function run(cmd, args, { cwd, channel = 'system', env } = {}) {
         windowsHide: true,
       });
     } catch (e) {
-      emitLog(channel, `[error] ${e.message}`);
+      emitLog(channel, mask(`[error] ${e.message}`));
       return resolve({ code: -1, error: e.message, out: '' });
     }
     let out = '';
     const onData = (buf) => {
       const s = buf.toString();
       out += s;
-      for (const line of s.split(/\r?\n/)) if (line.length) emitLog(channel, line);
+      for (const line of s.split(/\r?\n/)) if (line.length) emitLog(channel, mask(line));
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);

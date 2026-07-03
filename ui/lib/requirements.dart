@@ -47,6 +47,8 @@ class _RequirementsPageState extends State<RequirementsPage> {
               const SizedBox(height: 12),
               ...items.map(_tile),
               const SizedBox(height: 16),
+              const GitCredentialsCard(),
+              const SizedBox(height: 16),
               _nginxControl(),
               const SizedBox(height: 24),
               _steps(),
@@ -146,6 +148,8 @@ class _RequirementsPageState extends State<RequirementsPage> {
     );
   }
 
+  // (GitCredentialsCard is a separate widget below)
+
   Widget _nginxControl() {
     Widget b(String label, IconData icon, String action) => FilledButton.tonalIcon(
           onPressed: () => Api.instance.nginxAction(action),
@@ -202,6 +206,132 @@ class _RequirementsPageState extends State<RequirementsPage> {
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(s, style: const TextStyle(fontSize: 13)),
               )),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Set a GitHub Personal Access Token so private *_deploy repos can be pulled
+/// without any console/SSH — the manager injects it non-interactively.
+class GitCredentialsCard extends StatefulWidget {
+  const GitCredentialsCard({super.key});
+  @override
+  State<GitCredentialsCard> createState() => _GitCredentialsCardState();
+}
+
+class _GitCredentialsCardState extends State<GitCredentialsCard> {
+  final _token = TextEditingController();
+  final _testUrl = TextEditingController();
+  bool _hasToken = false;
+  bool _busy = false;
+  String? _msg;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final has = await Api.instance.gitHasToken();
+    if (mounted) setState(() => _hasToken = has);
+  }
+
+  Future<void> _save() async {
+    if (_token.text.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await Api.instance.saveGitToken(_token.text.trim());
+      _token.clear();
+      setState(() => _msg = 'Token saved.');
+      await _refresh();
+    } catch (e) {
+      setState(() => _msg = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clear() async {
+    await Api.instance.clearGitToken();
+    setState(() => _msg = 'Token removed.');
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.key, size: 18),
+            const SizedBox(width: 8),
+            const Text('Git credentials (private repos)',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            Icon(_hasToken ? Icons.check_circle : Icons.remove_circle_outline,
+                size: 16, color: _hasToken ? Colors.greenAccent : Colors.white38),
+            Text(_hasToken ? ' token set' : ' no token',
+                style: const TextStyle(fontSize: 12, color: Colors.white60)),
+          ]),
+          const SizedBox(height: 6),
+          const Text(
+            'Optional. The server uses its own git login (credential manager) automatically, '
+            'so if this machine can already clone your private repos, you need nothing here. '
+            'Set a shared token only if the server has no git access — it applies to all users.',
+            style: TextStyle(fontSize: 12, color: Colors.white60),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _token,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  labelText: 'GitHub Personal Access Token',
+                  hintText: 'ghp_...',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: _busy ? null : _save, child: const Text('Save')),
+            if (_hasToken) ...[
+              const SizedBox(width: 6),
+              OutlinedButton(onPressed: _busy ? null : _clear, child: const Text('Clear')),
+            ],
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _testUrl,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  labelText: 'Test a repo URL (output in the console below)',
+                  hintText: 'https://github.com/distrotion/SOME-DEPLOY',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              onPressed: () {
+                if (_testUrl.text.trim().isNotEmpty) {
+                  Api.instance.testGitToken(_testUrl.text.trim());
+                }
+              },
+              child: const Text('Test'),
+            ),
+          ]),
+          if (_msg != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_msg!, style: const TextStyle(fontSize: 12, color: Colors.lightBlueAccent)),
+            ),
         ]),
       ),
     );

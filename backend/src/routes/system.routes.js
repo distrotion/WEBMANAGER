@@ -2,8 +2,34 @@
 const express = require('express');
 const system = require('../system');
 const nginx = require('../nginx');
+const settings = require('../settings');
+const git = require('../git');
+const config = require('../config');
+const { run } = require('../runner');
 
 const router = express.Router();
+
+// --- Git credentials (Personal Access Token for private repos) ---
+router.get('/git-credentials', (req, res) => {
+  res.json({ hasToken: !!settings.get('git_token') });
+});
+router.put('/git-credentials', (req, res) => {
+  const t = ((req.body && req.body.token) || '').trim();
+  if (!t) return res.status(400).json({ error: 'token required' });
+  settings.set('git_token', t);
+  res.json({ ok: true, hasToken: true });
+});
+router.delete('/git-credentials', (req, res) => {
+  settings.del('git_token');
+  res.json({ ok: true, hasToken: false });
+});
+// Test the token against a repo URL (streams to the system channel, token masked).
+router.post('/git-credentials/test', (req, res) => {
+  const url = req.body && req.body.url;
+  if (!url) return res.status(400).json({ error: 'url required' });
+  res.json({ started: true, channel: 'system' });
+  git.lsRemote(url, 'system');
+});
 
 router.get('/requirements', async (req, res) => {
   try {
