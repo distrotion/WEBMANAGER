@@ -1,6 +1,6 @@
 <#
   WEBMANAGER installer for Windows Server 2019.
-  Run from an elevated PowerShell:  .\install.ps1 -Root D:\webmanager
+  Run from an elevated PowerShell:  .\install.ps1 -Root C:\webmanager
 
   Prerequisites (install first, on PATH):
     - Node.js LTS         https://nodejs.org
@@ -26,7 +26,7 @@
   To remove everything: .\uninstall.ps1 -Root <Root>
 #>
 param(
-  [string]$Root = "D:\webmanager",
+  [string]$Root = "C:\webmanager",
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot),
   [int]$ManagerPort = 8088,
   [string]$AdminPass = "admin1234",

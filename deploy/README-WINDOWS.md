@@ -1,15 +1,15 @@
 # WEBMANAGER — Windows Server 2019 setup
 
-End-to-end install. Target layout lives under `D:\webmanager`.
+End-to-end install. Target layout lives under `C:\webmanager`.
 
 ## 1. Prerequisites (install on the server, on PATH)
 - **Node.js LTS** — https://nodejs.org
 - **Git** — https://git-scm.com
 
 ## 2. Download tools into place
-- **nssm.exe** — https://nssm.cc/download → put at `D:\webmanager\tools\nssm.exe`
-- **nginx** — https://nginx.org/en/download.html → extract so `D:\webmanager\nginx\nginx.exe` exists
-- **win-acme** — https://www.win-acme.com → extract to `D:\webmanager\tools\win-acme\` (`wacs.exe`)
+- **nssm.exe** — https://nssm.cc/download → put at `C:\webmanager\tools\nssm.exe`
+- **nginx** — https://nginx.org/en/download.html → extract so `C:\webmanager\nginx\nginx.exe` exists
+- **win-acme** — https://www.win-acme.com → extract to `C:\webmanager\tools\win-acme\` (`wacs.exe`)
 
 (The installer creates the folders; you just drop these in. It will warn about any missing.)
 
@@ -22,9 +22,13 @@ flutter build web --release
 ## 4. Run the installer (elevated PowerShell)
 ```powershell
 cd deploy
-.\install.ps1 -Root D:\webmanager -AdminPass "<choose-a-password>"
+.\install.ps1 -Root C:\webmanager -AdminPass "<choose-a-password>"
 ```
-This copies backend + built UI into `D:\webmanager\app`, writes `.env` (with a random
+> **Pick a writable drive for `-Root`.** `C:\webmanager` is the safe default. Avoid `D:`
+> unless you know it's a real data drive — on many servers `D:` is the DVD drive (read-only),
+> which fails with *"Access to the path is denied"*. Check drives with
+> `Get-PSDrive -PSProvider FileSystem`.
+This copies backend + built UI into `C:\webmanager\app`, writes `.env` (with a random
 JWT secret), `npm install`s the backend, and registers **wm-manager** + **nginx** as
 NSSM services that:
 - **auto-start on every boot / reboot**
@@ -45,8 +49,8 @@ Get-Service wm-manager, nginx | Format-Table Name, Status, StartType
 
 ### Start / stop manually
 ```powershell
-.\scripts\start.ps1 -Root D:\webmanager      # or double-click scripts\start.cmd
-.\scripts\stop.ps1  -Root D:\webmanager      # or scripts\stop.cmd
+.\scripts\start.ps1 -Root C:\webmanager      # or double-click scripts\start.cmd
+.\scripts\stop.ps1  -Root C:\webmanager      # or scripts\stop.cmd
 # or plain Windows service commands:
 net start wm-manager ; net start nginx
 net stop  nginx      ; net stop  wm-manager
@@ -54,13 +58,13 @@ net stop  nginx      ; net stop  wm-manager
 
 ### Uninstall
 ```powershell
-.\deploy\uninstall.ps1 -Root D:\webmanager           # remove services + firewall rules (keeps data)
-.\deploy\uninstall.ps1 -Root D:\webmanager -Purge    # also delete D:\webmanager
+.\deploy\uninstall.ps1 -Root C:\webmanager           # remove services + firewall rules (keeps data)
+.\deploy\uninstall.ps1 -Root C:\webmanager -Purge    # also delete C:\webmanager
 ```
 
 ## 5. (Optional) Node-RED runtime
 ```powershell
-.\install-nodered.ps1 -Root D:\webmanager
+.\install-nodered.ps1 -Root C:\webmanager
 ```
 Then create a site with runtime **Node-RED** in the panel and press **Start**.
 
@@ -70,8 +74,8 @@ Then create a site with runtime **Node-RED** in the panel and press **Start**.
 - Restrict the **manager port (8088)** to trusted IPs / VPN.
 
 ## How it maps to the 2-layer design
-- Layer 1 (direct ports): `D:\webmanager\nginx\conf.d\ports\*.conf` — one per static site.
-- Layer 2 (front 80/443 + TLS): `D:\webmanager\nginx\conf.d\front\*.conf` — subdomain & path.
+- Layer 1 (direct ports): `C:\webmanager\nginx\conf.d\ports\*.conf` — one per static site.
+- Layer 2 (front 80/443 + TLS): `C:\webmanager\nginx\conf.d\front\*.conf` — subdomain & path.
 - The manager writes these files and runs `nginx -t` then `nginx -s reload` on every change.
 
 ## Updating

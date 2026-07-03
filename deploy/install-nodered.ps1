@@ -3,7 +3,7 @@
   The manager points each Node-RED site's NSSM service at this red.js,
   with its own userDir + port. Run after install.ps1.
 #>
-param([string]$Root = "D:\webmanager")
+param([string]$Root = "C:\webmanager")
 $ErrorActionPreference = "Stop"
 $dir = "$Root\runtimes\node-red"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null

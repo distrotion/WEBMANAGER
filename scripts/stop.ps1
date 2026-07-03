@@ -1,7 +1,7 @@
 <#
   Stop WEBMANAGER on Windows (services if installed, else dev processes).
 #>
-param([string]$Root = "D:\webmanager")
+param([string]$Root = "C:\webmanager")
 $ErrorActionPreference = "SilentlyContinue"
 
 $svc = Get-Service wm-manager -ErrorAction SilentlyContinue

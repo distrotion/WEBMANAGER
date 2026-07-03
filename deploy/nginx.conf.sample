@@ -1,4 +1,4 @@
-# D:\webmanager\nginx\conf\nginx.conf  (sample — adjust worker/log paths to taste)
+# C:\webmanager\nginx\conf\nginx.conf  (sample — adjust worker/log paths to taste)
 # The manager writes per-site files into conf.d\ports and conf.d\front.
 
 worker_processes  auto;

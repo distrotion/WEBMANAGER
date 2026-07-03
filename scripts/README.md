@@ -14,8 +14,8 @@ Override target/port: `WEBMANAGER_ROOT=/srv/wm PORT=9000 ./scripts/start.sh`
 ## Windows
 Double-click **start.cmd** / **stop.cmd**, or from PowerShell:
 ```powershell
-.\scripts\start.ps1 -Root D:\webmanager
-.\scripts\stop.ps1  -Root D:\webmanager
+.\scripts\start.ps1 -Root C:\webmanager
+.\scripts\stop.ps1  -Root C:\webmanager
 ```
 - If installed as services via `deploy\install.ps1` → controls the **wm-manager** + **nginx** NSSM services (auto-start on boot).
 - If not installed → runs node + nginx directly (dev mode).

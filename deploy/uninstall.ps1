@@ -1,9 +1,9 @@
 <#
   Remove WEBMANAGER Windows services + firewall rules.
-  Run from an elevated PowerShell:  .\uninstall.ps1 -Root D:\webmanager
+  Run from an elevated PowerShell:  .\uninstall.ps1 -Root C:\webmanager
   Data under <Root> (sites, certs, db) is KEPT unless -Purge is given.
 #>
-param([string]$Root = "D:\webmanager", [switch]$Purge)
+param([string]$Root = "C:\webmanager", [switch]$Purge)
 $ErrorActionPreference = "SilentlyContinue"
 function Info($m){ Write-Host "[uninstall] $m" -ForegroundColor Cyan }
 

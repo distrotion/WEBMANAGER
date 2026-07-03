@@ -18,11 +18,12 @@ const os = require('os');
   }
 })();
 
-// On Windows Server this is D:\webmanager. For local dev it falls back to ~/webmanager-dev.
+// On Windows Server this is C:\webmanager. For local dev it falls back to ~/webmanager-dev.
+// (install.ps1 sets WEBMANAGER_ROOT via .env, so this is only the no-config fallback.)
 const ROOT =
   process.env.WEBMANAGER_ROOT ||
   (process.platform === 'win32'
-    ? 'D:\\webmanager'
+    ? 'C:\\webmanager'
     : path.join(os.homedir(), 'webmanager-dev'));
 
 module.exports = {

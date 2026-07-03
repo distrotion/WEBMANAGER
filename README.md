@@ -35,10 +35,10 @@ Stack: **Node.js/Express + SQLite** backend, **Flutter web** UI, **nginx**, **NS
 - [Node.js LTS](https://nodejs.org)
 - [Git](https://git-scm.com)
 
-### 2. Get the tools into `D:\webmanager`
-- [nssm.exe](https://nssm.cc/download) → `D:\webmanager\tools\nssm.exe`
-- [nginx (Windows zip)](https://nginx.org/en/download.html) → extract so `D:\webmanager\nginx\nginx.exe` exists
-- [win-acme](https://www.win-acme.com) → `D:\webmanager\tools\win-acme\`
+### 2. Get the tools into `C:\webmanager`
+- [nssm.exe](https://nssm.cc/download) → `C:\webmanager\tools\nssm.exe`
+- [nginx (Windows zip)](https://nginx.org/en/download.html) → extract so `C:\webmanager\nginx\nginx.exe` exists
+- [win-acme](https://www.win-acme.com) → `C:\webmanager\tools\win-acme\`
 
 > The installer creates the folders — you just drop these in. It warns about anything missing.
 
@@ -51,7 +51,7 @@ flutter build web --release
 ### 4. Run the installer (elevated PowerShell)
 ```powershell
 cd deploy
-.\install.ps1 -Root D:\webmanager -AdminPass "<choose-a-password>"
+.\install.ps1 -Root C:\webmanager -AdminPass "<choose-a-password>"
 ```
 It installs the backend, and registers **wm-manager** + **nginx** as NSSM services that
 **auto-start on every boot/reboot**, **auto-restart on crash**, and start in the right
@@ -63,7 +63,7 @@ Open **http://\<server\>:8088** and sign in (`admin` / your password).
 ```powershell
 .\scripts\start.ps1        # or double-click scripts\start.cmd  (or: net start wm-manager)
 .\scripts\stop.ps1         # or scripts\stop.cmd
-.\deploy\uninstall.ps1 -Root D:\webmanager          # remove services (keep data)
+.\deploy\uninstall.ps1 -Root C:\webmanager          # remove services (keep data)
 ```
 Full details: [deploy/README-WINDOWS.md](deploy/README-WINDOWS.md).
 

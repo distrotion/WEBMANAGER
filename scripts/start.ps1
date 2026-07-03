@@ -3,7 +3,7 @@
   - If installed as NSSM services (via install.ps1) -> starts wm-manager + nginx.
   - Otherwise (dev) -> launches node + nginx directly.
 #>
-param([string]$Root = "D:\webmanager", [int]$Port = 8088)
+param([string]$Root = "C:\webmanager", [int]$Port = 8088)
 $ErrorActionPreference = "SilentlyContinue"
 
 $svc = Get-Service wm-manager -ErrorAction SilentlyContinue
