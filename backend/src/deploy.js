@@ -92,6 +92,11 @@ async function deployStatic(site, user) {
   }
   await nginx.reload(channel);
 
+  // open the direct port in the firewall so LAN machines can reach it
+  if (site.direct_port && site.direct_port_enabled) {
+    await require('./firewall').openPort(site.direct_port, channel);
+  }
+
   db.prepare(
     `UPDATE sites SET status='running', current_release=?, last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
   ).run(ts, commit, site.id);

@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const nginx = require('../nginx');
+const firewall = require('../firewall');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -95,22 +96,33 @@ router.delete('/:id', (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   nginx.removeSiteConfigs(s);
+  if (s.direct_port) firewall.closePort(s.direct_port, 'system').catch(() => {});
   db.prepare('DELETE FROM sites WHERE id=?').run(s.id);
   db.prepare('DELETE FROM releases WHERE site_id=?').run(s.id);
   audit(req.user, 'delete-site', s.name);
   res.json({ ok: true });
 });
 
-// Toggle layer-1 direct port on/off
+// Toggle layer-1 direct port on/off — updates nginx + Windows Firewall, logs to
+// the site channel.
 router.post('/:id/port', (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const enabled = req.body && req.body.enabled ? 1 : 0;
   db.prepare('UPDATE sites SET direct_port_enabled=? WHERE id=?').run(enabled, s.id);
   const updated = getSite(s.id);
-  nginx.writePortConf(updated);
-  audit(req.user, 'toggle-port', s.name, enabled ? 'on' : 'off');
+  const channel = `site-${s.id}`;
   res.json({ ok: true, direct_port_enabled: enabled });
+  (async () => {
+    nginx.writePortConf(updated); // add/remove the :port server block
+    const t = await nginx.test(channel);
+    if (t.code === 0) await nginx.reload(channel);
+    if (updated.direct_port) {
+      if (enabled) await firewall.openPort(updated.direct_port, channel);
+      else await firewall.closePort(updated.direct_port, channel);
+    }
+    audit(req.user, 'toggle-port', s.name, enabled ? 'on' : 'off');
+  })().catch((e) => require('../logbus').emitLog(channel, `[fatal] ${e.message}`));
 });
 
 module.exports = router;

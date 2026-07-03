@@ -69,9 +69,11 @@ net stop  nginx      ; net stop  wm-manager
 Then create a site with runtime **Node-RED** in the panel and press **Start**.
 
 ## 6. Firewall
-- Allow **80** and **443** (public, for the front + ACME).
-- Allow the **direct ports** you use (9500, 7500, …) only on the internal network.
-- Restrict the **manager port (8088)** to trusted IPs / VPN.
+- **80** and **443** are opened by the installer (front + ACME).
+- **Direct ports** (9500, 7500, …) are opened/closed **automatically** by the manager
+  when you enable/disable a site's port (inbound TCP rule `wm-port-<port>`).
+- The **manager port (8088)** is limited to `LocalSubnet` by the installer — tighten the
+  `WEBMANAGER panel` rule to trusted IPs / VPN as needed.
 
 ## How it maps to the 2-layer design
 - Layer 1 (direct ports): `C:\webmanager\nginx\conf.d\ports\*.conf` — one per static site.

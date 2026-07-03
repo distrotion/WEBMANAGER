@@ -144,7 +144,7 @@ Allow-Port "WEBMANAGER https" 443
 # Manager panel: restrict to LAN by default - edit remoteip to your admin subnet/VPN.
 Allow-Port "WEBMANAGER panel" $ManagerPort "LocalSubnet"
 Warn "Panel port $ManagerPort is allowed from LocalSubnet only - adjust the 'WEBMANAGER panel' rule for your network."
-Warn "Direct app ports (9500, 7500, ...) are NOT opened here - add rules per site if you expose them."
+Info "Direct app ports open/close automatically when you enable/disable a site's port (firewall rule wm-port-<port>)."
 
 # 7. Verify -----------------------------------------------------------------
 Write-Host ""
