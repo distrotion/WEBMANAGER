@@ -1,0 +1,26 @@
+# D:\webmanager\nginx\conf\nginx.conf  (sample — adjust worker/log paths to taste)
+# The manager writes per-site files into conf.d\ports and conf.d\front.
+
+worker_processes  auto;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout  65;
+
+    # gzip (helps Flutter main.dart.js which is large)
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # ---- Layer 1: direct-port access (one server{} per app, e.g. :9500, :7500) ----
+    include conf.d/ports/*.conf;
+
+    # ---- Layer 2: front 80/443 + TLS (subdomain & path routing) ----
+    include conf.d/front/*.conf;
+}
