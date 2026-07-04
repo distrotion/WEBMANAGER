@@ -4,24 +4,26 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 **Windows Server 2019** (also runs on macOS/Linux for development).
 
 - **Git-based deploy** — pull a `*_deploy` repo (or point at a local folder), publish
-  atomically, reload nginx. One-click **Pull & Deploy**, **Restart**, **Reload**.
-- **Two-layer nginx** — each app on its own **direct port** (layer 1, toggle on/off) and
-  behind a shared **front on 80/443 with TLS** (layer 2), by **subdomain** or **path**.
+  atomically (junction swap), reload nginx. One-click **Pull & Deploy**, **Restart**, **Reload**.
+- **Two-layer nginx** — each app on its own **direct port** (layer 1, toggle on/off, firewall
+  managed automatically) and behind a shared **front on 80/443 with TLS** (layer 2), by
+  **subdomain** or **path**.
 - **Runtimes** — static Flutter web, **Node-RED** (start/stop/restart), and Node backends.
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
+- **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
+- **Multi-user** — admin-managed accounts and roles; login is remembered.
 - **Live logs** — every action streams its output to an in-browser console.
-- **Requirements page** — checks the server has everything (auto-adapts Mac/Windows).
 
 ```
-                 ┌─── layer 1: direct ports (internal) ───┐
- git *_deploy ──►  app1 (static)  :9500  [on/off]          │
- local folder ──►  app2 (static)  :7500  [on/off]          │
-        run   ──►  Node-RED        :1880  [start/stop]      │
-                 └───────────────────────┬──────────────────┘
-                 ┌───────────────────────▼──────────────────┐
-                 │ layer 2: nginx 80/443 + TLS              │
-                 │  app1.domain → :9500   domain/app2 → :7500│
-                 └──────────────────────────────────────────┘
+                 +--- layer 1: direct ports (internal) ---+
+ git *_deploy -->  app1 (static)  :9500  [on/off]          |
+ local folder -->  app2 (static)  :7500  [on/off]          |
+        run   -->  Node-RED        :1880  [start/stop]      |
+                 +-----------------------+------------------+
+                 +-----------------------v------------------+
+                 | layer 2: nginx 80/443 + TLS             |
+                 |  app1.domain -> :9500   domain/app2 ...  |
+                 +------------------------------------------+
 ```
 
 Stack: **Node.js/Express + SQLite** backend, **Flutter web** UI, **nginx**, **NSSM**
@@ -29,78 +31,93 @@ Stack: **Node.js/Express + SQLite** backend, **Flutter web** UI, **nginx**, **NS
 
 ---
 
-## Install on Windows Server 2019
+## Install on Windows Server 2019 (one click)
 
-### 1. Prerequisites (on PATH)
-- [Node.js **22 LTS**](https://nodejs.org)  *(Node 23+ can break native modules)*
-- [Git](https://git-scm.com)
+**Prerequisites:** [Git](https://git-scm.com) on PATH. (Node 22 LTS is installed automatically
+if missing; nssm is bundled; nginx is auto-downloaded; the UI is pre-built — no Flutter needed.)
 
-That's it — **nssm is bundled** in the repo and **nginx is auto-downloaded** by the installer.
-(The UI is already built and committed, so Flutter is not needed on the server.)
-
-### 2. One-click setup
 ```powershell
 git clone https://github.com/distrotion/WEBMANAGER C:\src\WEBMANAGER
 ```
-Then **double-click `setup.cmd`** (or run `.\setup.cmd`). It elevates to admin, checks the
-system (Node/Git/drive/nginx/nssm), **auto-installs Node 22 if missing**, downloads nginx,
-drops in the bundled nssm, installs the backend, registers **wm-manager** + **nginx** as
-auto-start services, opens the firewall, and finally tells you whether the panel is **READY**.
+Then **double-click `setup.cmd`** in `C:\src\WEBMANAGER`.
 
-Prefer explicit args? `.\setup.cmd -Root C:\webmanager -AdminPass "yourpass"`
-(or run the engine directly: `.\deploy\install.ps1 -Root C:\webmanager -AdminPass "yourpass"`).
+`setup.cmd` elevates to admin, runs a system check, installs everything, registers
+**wm-manager** + **nginx** as auto-start services, opens the firewall, and reports readiness:
 
-When it prints **READY**, open **http://\<server\>:8088** and sign in (`admin` / your password).
-It auto-starts on every reboot. Direct app ports are opened in the firewall automatically per site.
+```
+System check:
+[ OK ] Node.js              v22.23.1
+[ OK ] Git                  git version 2.x
+[ OK ] Writable drive       C:\webmanager OK
+[ OK ] nssm                 bundled in repo
+[ OK ] nginx                will auto-download
+...
+Result:
+[ OK ] wm-manager service   Running / Automatic
+[ OK ] nginx service        Running / Automatic
+[ OK ] Panel responds       http://localhost:8088
 
-> Use a writable drive for `-Root` (`C:\webmanager` is safe). `D:` is often a read-only DVD drive.
-> For SSL, drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`.
+  READY.  Open  http://localhost:8088   (admin / admin1234)
+```
+
+Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
+
+**Options / notes**
+- Custom root/password: `.\setup.cmd -Root C:\webmanager -AdminPass "yourpass"`
+- Use a **writable drive** for `-Root` (`C:\webmanager` is safe; `D:` is often a read-only DVD).
+- **SSL:** drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`, then
+  press **Issue SSL** on a site.
+- **Node-RED:** run `.\deploy\install-nodered.ps1 -Root C:\webmanager` once.
+- **Update:** `git pull` then `.\setup.cmd` (or `.\deploy\install.ps1 -Root C:\webmanager`).
 
 ### Start / stop / uninstall
 ```powershell
-.\scripts\start.ps1        # or double-click scripts\start.cmd  (or: net start wm-manager)
-.\scripts\stop.ps1         # or scripts\stop.cmd
-.\deploy\uninstall.ps1 -Root C:\webmanager          # remove services (keep data)
+.\scripts\start.cmd            # or: net start wm-manager
+.\scripts\stop.cmd             # or: net stop  wm-manager
+.\deploy\uninstall.ps1 -Root C:\webmanager           # remove services (keep data)
+.\deploy\uninstall.ps1 -Root C:\webmanager -Purge    # also delete C:\webmanager
 ```
-Full details: [deploy/README-WINDOWS.md](deploy/README-WINDOWS.md).
+More detail: [deploy/README-WINDOWS.md](deploy/README-WINDOWS.md).
 
 ---
 
 ## Run locally (macOS / Linux, for development)
 
 ```bash
-# backend deps
 cd backend && npm install && cd ..
-# nginx (optional, for full flow):  brew install nginx     # mac
-# build the UI once:
-cd ui && flutter build web --release && cd ..
+# nginx (optional, for the full flow):  brew install nginx      # mac
+cd ui && flutter build web --release && cd ..                   # build the UI once
 
-# start / stop (backend + nginx)
-./scripts/start.sh          # → http://localhost:8088
+./scripts/start.sh     # -> http://localhost:8088   (backend + nginx)
 ./scripts/stop.sh
 ./scripts/status.sh
 ```
 Override target/port: `WEBMANAGER_ROOT=~/wm PORT=9000 ./scripts/start.sh`.
-The backend serves the built UI itself, so one process = whole panel.
+The backend serves the built UI itself, so one process = the whole panel.
 
 ---
 
 ## Using the panel
-1. **New site** → pick runtime + source (Git repo **or** Local folder — use **Browse** to
-   locate a folder on the server), set a direct port and front exposure (subdomain/path).
+1. **New site** — pick runtime + source (Git repo **or** Local folder, with a **Browse** picker),
+   a direct port, front exposure (subdomain/path), and branch (for git).
 2. **Pull & Deploy** (static/node) or **Start** (Node-RED) — watch the live console.
-3. **Open** the site via its direct port or the TLS front.
-4. **Issue SSL** to get a Let's Encrypt cert; **Reload nginx**, **Restart**, etc. as needed.
+3. **Open** the site via its direct port or the TLS front (buttons on the site page).
+4. **Edit** a site anytime (branch/repo/source/port/exposure), then Pull & Deploy to apply.
+5. **Issue SSL**, **Reload nginx**, **Restart**, toggle the **direct port** (firewall auto).
+6. **Console** (admin) — a real shell in the site's folder or server-wide.
+7. **Account menu** (admin) — manage **Users**, change password, requirements page.
 
-The login and the create-site form defaults are remembered across refreshes.
+Login and the create-site form defaults are remembered across refreshes.
 
 ---
 
 ## Project layout
 ```
-backend/    Node/Express API — auth, git/local deploy, nginx config gen, NSSM, win-acme, WS logs
+setup.cmd / setup.ps1   one-click Windows setup (check + install + verify)
+backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
+            firewall, NSSM process control, win-acme, WebSocket logs + shell (pty)
 ui/         Flutter web control panel
-deploy/     install.ps1, uninstall.ps1, install-nodered.ps1, README-WINDOWS.md
+deploy/     install.ps1, uninstall.ps1, install-nodered.ps1, bundled tools\nssm.exe
 scripts/    start/stop/status for macOS/Linux + Windows
 PLAN.md     full design & decisions
 ```
