@@ -38,18 +38,20 @@ Stack: **Node.js/Express + SQLite** backend, **Flutter web** UI, **nginx**, **NS
 That's it — **nssm is bundled** in the repo and **nginx is auto-downloaded** by the installer.
 (The UI is already built and committed, so Flutter is not needed on the server.)
 
-### 2. Clone + run the installer (elevated PowerShell)
+### 2. One-click setup
 ```powershell
 git clone https://github.com/distrotion/WEBMANAGER C:\src\WEBMANAGER
-cd C:\src\WEBMANAGER\deploy
-.\install.ps1 -Root C:\webmanager -AdminPass "<choose-a-password>"
 ```
-The installer checks Node/Git, drops in nssm, downloads nginx, installs the backend,
-and registers **wm-manager** + **nginx** as NSSM services that **auto-start on every
-boot/reboot**, **auto-restart on crash**, and start in the right order. It opens the
-firewall for 80/443 (direct app ports are opened automatically per site).
+Then **double-click `setup.cmd`** (or run `.\setup.cmd`). It elevates to admin, checks the
+system (Node/Git/drive/nginx/nssm), **auto-installs Node 22 if missing**, downloads nginx,
+drops in the bundled nssm, installs the backend, registers **wm-manager** + **nginx** as
+auto-start services, opens the firewall, and finally tells you whether the panel is **READY**.
 
-Open **http://\<server\>:8088** and sign in (`admin` / your password).
+Prefer explicit args? `.\setup.cmd -Root C:\webmanager -AdminPass "yourpass"`
+(or run the engine directly: `.\deploy\install.ps1 -Root C:\webmanager -AdminPass "yourpass"`).
+
+When it prints **READY**, open **http://\<server\>:8088** and sign in (`admin` / your password).
+It auto-starts on every reboot. Direct app ports are opened in the firewall automatically per site.
 
 > Use a writable drive for `-Root` (`C:\webmanager` is safe). `D:` is often a read-only DVD drive.
 > For SSL, drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`.
