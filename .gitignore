@@ -13,3 +13,6 @@ ui/.dart_tool/
 
 # Local runtime data
 webmanager-dev/
+
+# Serena tool
+.serena/

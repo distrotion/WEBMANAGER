@@ -5,3 +5,6 @@
 
 # Keep shell scripts LF for macOS/Linux.
 *.sh text eol=lf
+
+# Binaries — never touch line endings.
+*.exe binary

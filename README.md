@@ -32,32 +32,27 @@ Stack: **Node.js/Express + SQLite** backend, **Flutter web** UI, **nginx**, **NS
 ## Install on Windows Server 2019
 
 ### 1. Prerequisites (on PATH)
-- [Node.js LTS](https://nodejs.org)
+- [Node.js **22 LTS**](https://nodejs.org)  *(Node 23+ can break native modules)*
 - [Git](https://git-scm.com)
 
-### 2. Get the tools into `C:\webmanager`
-- [nssm.exe](https://nssm.cc/download) → `C:\webmanager\tools\nssm.exe`
-- [nginx (Windows zip)](https://nginx.org/en/download.html) → extract so `C:\webmanager\nginx\nginx.exe` exists
-- [win-acme](https://www.win-acme.com) → `C:\webmanager\tools\win-acme\`
+That's it — **nssm is bundled** in the repo and **nginx is auto-downloaded** by the installer.
+(The UI is already built and committed, so Flutter is not needed on the server.)
 
-> The installer creates the folders — you just drop these in. It warns about anything missing.
-
-### 3. Build the UI (needs Flutter; can be a dev machine)
-```bash
-cd ui
-flutter build web --release
-```
-
-### 4. Run the installer (elevated PowerShell)
+### 2. Clone + run the installer (elevated PowerShell)
 ```powershell
-cd deploy
+git clone https://github.com/distrotion/WEBMANAGER C:\src\WEBMANAGER
+cd C:\src\WEBMANAGER\deploy
 .\install.ps1 -Root C:\webmanager -AdminPass "<choose-a-password>"
 ```
-It installs the backend, and registers **wm-manager** + **nginx** as NSSM services that
-**auto-start on every boot/reboot**, **auto-restart on crash**, and start in the right
-order (nginx depends on wm-manager). It also opens the firewall for 80/443.
+The installer checks Node/Git, drops in nssm, downloads nginx, installs the backend,
+and registers **wm-manager** + **nginx** as NSSM services that **auto-start on every
+boot/reboot**, **auto-restart on crash**, and start in the right order. It opens the
+firewall for 80/443 (direct app ports are opened automatically per site).
 
 Open **http://\<server\>:8088** and sign in (`admin` / your password).
+
+> Use a writable drive for `-Root` (`C:\webmanager` is safe). `D:` is often a read-only DVD drive.
+> For SSL, drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`.
 
 ### Start / stop / uninstall
 ```powershell

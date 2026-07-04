@@ -3,14 +3,16 @@
   Run from an elevated PowerShell:  .\install.ps1 -Root C:\webmanager
 
   Prerequisites (install first, on PATH):
-    - Node.js LTS         https://nodejs.org
+    - Node.js 22 LTS      https://nodejs.org
     - Git                 https://git-scm.com
-  Place these tools under <Root>\tools (the script will tell you what's missing):
-    - nssm.exe            https://nssm.cc/download
-    - nginx (folder)      https://nginx.org/en/download.html  -> <Root>\nginx
-    - win-acme (folder)   https://www.win-acme.com            -> <Root>\tools\win-acme
+
+  Everything else is automatic:
+    - nssm.exe  -> bundled in the repo (deploy\tools\nssm.exe), copied into place
+    - nginx     -> downloaded from nginx.org and extracted to <Root>\nginx
+    - (optional) win-acme for SSL -> drop into <Root>\tools\win-acme yourself
 
   This script:
+    0. checks Node + Git, provisions nssm (bundled) and nginx (download)
     1. creates the <Root> folder structure
     2. copies the repo (backend + built UI) into <Root>\app
     3. installs backend npm deps + writes .env (random JWT secret)
@@ -36,6 +38,21 @@ param(
 $ErrorActionPreference = "Stop"
 function Info($m){ Write-Host "[install] $m" -ForegroundColor Cyan }
 function Warn($m){ Write-Host "[warn]    $m" -ForegroundColor Yellow }
+function Die($m){ Write-Host "[error]   $m" -ForegroundColor Red; exit 1 }
+
+# --- prerequisite: Node.js (must be on PATH) --------------------------------
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Die "Node.js not found on PATH. Install Node 22 LTS from https://nodejs.org then re-open PowerShell and re-run."
+}
+$nodeVer = (& node -v)
+Info "Node $nodeVer"
+if ($nodeVer -match '^v(\d+)') {
+  $maj = [int]$Matches[1]
+  if ($maj -ge 23) { Warn "Node $nodeVer may break native modules (better-sqlite3/node-pty). Node 22 LTS recommended." }
+}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Die "Git not found on PATH. Install from https://git-scm.com then re-run."
+}
 
 if ([string]::IsNullOrWhiteSpace($JwtSecret)) {
   # Works on Windows PowerShell 5.1 (.NET Framework) and PowerShell 7 alike.
@@ -54,6 +71,37 @@ $dirs = @(
   "$Root\app"
 )
 foreach ($d in $dirs) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+
+# 1b. Provision tools (nssm bundled in repo, nginx auto-downloaded) ----------
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# nssm: use the copy bundled in the repo (deploy\tools\nssm.exe) if none present
+if (-not (Test-Path "$Root\tools\nssm.exe")) {
+  $bundledNssm = Join-Path $PSScriptRoot "tools\nssm.exe"
+  if (Test-Path $bundledNssm) {
+    Info "installing bundled nssm.exe"
+    Copy-Item $bundledNssm "$Root\tools\nssm.exe" -Force
+  } else {
+    Warn "nssm.exe not bundled and not present - download from https://nssm.cc"
+  }
+}
+
+# nginx: auto-download the Windows build if missing
+if (-not (Test-Path "$Root\nginx\nginx.exe")) {
+  $nginxVer = $env:NGINX_VERSION; if ([string]::IsNullOrWhiteSpace($nginxVer)) { $nginxVer = "1.28.0" }
+  Info "downloading nginx $nginxVer ..."
+  try {
+    $tmp = "$env:TEMP\wm-nginx.zip"
+    Invoke-WebRequest "https://nginx.org/download/nginx-$nginxVer.zip" -OutFile $tmp -UseBasicParsing
+    $ex = "$env:TEMP\wm-nginx-x"
+    if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
+    Expand-Archive $tmp $ex -Force
+    Copy-Item "$ex\nginx-$nginxVer\*" "$Root\nginx\" -Recurse -Force
+    Info "nginx installed to $Root\nginx"
+  } catch {
+    Warn "nginx download failed ($($_.Exception.Message)). Put nginx.exe at $Root\nginx\ manually and re-run."
+  }
+}
 
 # 2. Copy repo (backend + built UI) ----------------------------------------
 Info "copying backend from $RepoDir\backend"
