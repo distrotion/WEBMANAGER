@@ -176,9 +176,21 @@ if (-not (Test-Path $nssm)) {
   } else { Warn "nginx.exe not found at $Root\nginx - extract nginx there first, then re-run." }
 
   Info "starting services now (manager first, then nginx)"
-  & $nssm start wm-manager 2>$null
+  # free port 8088 from any stray manual 'node src\server.js' so the service can bind
+  Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*backend\src\server.js*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  # restart = start if stopped, or reload new files if already running
+  & $nssm restart wm-manager 2>$null
   Start-Sleep -Seconds 3
-  & $nssm start nginx 2>$null
+  & $nssm restart nginx 2>$null
+  Start-Sleep -Seconds 2
+
+  $m = Get-Service wm-manager -ErrorAction SilentlyContinue
+  if ($m -and $m.Status -ne 'Running') {
+    Warn "wm-manager did not reach Running. Recent log:"
+    if (Test-Path "$Root\logs\manager.log") { Get-Content "$Root\logs\manager.log" -Tail 15 }
+  }
 }
 
 # 6. Firewall ---------------------------------------------------------------
