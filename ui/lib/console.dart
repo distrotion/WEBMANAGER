@@ -20,6 +20,18 @@ class _LogConsoleState extends State<LogConsole> {
   @override
   void initState() {
     super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // load persisted history first, then stream live
+    final hist = await Api.instance.logHistory(widget.channel, limit: 500);
+    if (mounted && hist.isNotEmpty) {
+      setState(() {
+        _lines.addAll(hist);
+        _lines.add('--- live ---');
+      });
+    }
     _connect();
   }
 
@@ -86,9 +98,12 @@ class _LogConsoleState extends State<LogConsole> {
                   style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12)),
               const Spacer(),
               IconButton(
-                tooltip: 'Clear',
+                tooltip: 'Clear (also deletes stored history)',
                 icon: const Icon(Icons.clear_all, size: 16, color: Color(0xFF9CA3AF)),
-                onPressed: () => setState(_lines.clear),
+                onPressed: () {
+                  setState(_lines.clear);
+                  Api.instance.clearLogHistory(widget.channel);
+                },
               ),
             ],
           ),

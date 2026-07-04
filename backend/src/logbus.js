@@ -2,14 +2,24 @@
 const { WebSocketServer } = require('ws');
 const { EventEmitter } = require('events');
 const { verifyToken } = require('./auth');
+const db = require('./db');
 
-// Central event bus: every spawned command line is emitted here and fanned out
-// to WebSocket clients subscribed to the matching channel.
+// Central event bus: every spawned command line is emitted here, persisted to
+// SQLite, and fanned out to WebSocket clients subscribed to the matching channel.
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
 
+const _insertLog = db.prepare('INSERT INTO logs (channel, line) VALUES (?, ?)');
+
 function emitLog(channel, line) {
   if (process.env.WM_LOG_CONSOLE) console.log(`[${channel}] ${line}`);
+  if (channel && channel !== 'silent') {
+    try {
+      _insertLog.run(channel, String(line));
+    } catch {
+      /* logging must never break the action */
+    }
+  }
   bus.emit('log', { channel, line, t: Date.now() });
 }
 

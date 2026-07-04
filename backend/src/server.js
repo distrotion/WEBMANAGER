@@ -15,6 +15,18 @@ for (const d of [config.paths.logs, config.paths.certs, config.paths.services, c
   fs.mkdirSync(d, { recursive: true });
 }
 
+// Prune persisted logs older than 30 days (on boot + hourly) to bound the DB.
+const db = require('./db');
+const pruneLogs = () => {
+  try {
+    db.prepare("DELETE FROM logs WHERE ts < datetime('now','-30 days')").run();
+  } catch {
+    /* ignore */
+  }
+};
+pruneLogs();
+setInterval(pruneLogs, 60 * 60 * 1000).unref();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -23,6 +35,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true, root: config.ROOT }));
 
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/users', authMiddleware, require('./routes/users.routes'));
+app.use('/api/logs', authMiddleware, require('./routes/logs.routes'));
 app.use('/api/system', authMiddleware, require('./routes/system.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));

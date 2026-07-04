@@ -212,6 +212,25 @@ class Api {
         headers: _headers, body: body == null ? null : jsonEncode(body));
   }
 
+  /// Persisted log history for a channel (`site-<id>` or `system`).
+  Future<List<String>> logHistory(String channel, {int limit = 500}) async {
+    try {
+      final r = await http.get(
+        _u('/api/logs/history?channel=${Uri.encodeQueryComponent(channel)}&limit=$limit'),
+        headers: _headers,
+      );
+      if (r.statusCode != 200) return [];
+      return (jsonDecode(r.body) as List).map((e) => e['line'].toString()).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> clearLogHistory(String channel) async {
+    await http.delete(_u('/api/logs/history?channel=${Uri.encodeQueryComponent(channel)}'),
+        headers: _headers);
+  }
+
   /// Open the live-log socket for a channel (e.g. site-3).
   WebSocketChannel logSocket(String channel) {
     final b = _base.replaceFirst('http', 'ws');

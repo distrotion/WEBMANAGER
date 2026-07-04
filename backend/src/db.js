@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS logs (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel TEXT NOT NULL,           -- site-<id> | system
+  line    TEXT NOT NULL,
+  ts      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_logs_channel ON logs(channel, id);
 `);
 
 // Lightweight migrations for DBs created before a column existed.
