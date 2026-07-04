@@ -231,6 +231,29 @@ class Api {
         headers: _headers);
   }
 
+  Future<Map<String, dynamic>> logSettings() async {
+    final r = await http.get(_u('/api/logs/settings'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('log settings failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> saveLogSettings({int? retentionMonths, bool? autoPrune}) async {
+    await http.put(_u('/api/logs/settings'),
+        headers: _headers,
+        body: jsonEncode({
+          if (retentionMonths != null) 'retentionMonths': retentionMonths,
+          if (autoPrune != null) 'autoPrune': autoPrune,
+        }));
+  }
+
+  /// Delete logs older than [months] now; returns how many rows were removed.
+  Future<int> pruneLogs({int? months}) async {
+    final r = await http.post(_u('/api/logs/prune'),
+        headers: _headers, body: jsonEncode({if (months != null) 'months': months}));
+    if (r.statusCode != 200) throw Exception('prune failed');
+    return (jsonDecode(r.body)['deleted'] as num).toInt();
+  }
+
   /// Open the live-log socket for a channel (e.g. site-3).
   WebSocketChannel logSocket(String channel) {
     final b = _base.replaceFirst('http', 'ws');

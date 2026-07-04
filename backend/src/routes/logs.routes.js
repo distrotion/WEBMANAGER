@@ -1,8 +1,34 @@
 'use strict';
 const express = require('express');
 const db = require('../db');
+const logprune = require('../logprune');
 
 const router = express.Router();
+
+// Retention settings (keep last N months + auto-prune on/off).
+router.get('/settings', (req, res) => {
+  res.json({
+    retentionMonths: logprune.retentionMonths(),
+    autoPrune: logprune.autoPruneEnabled(),
+  });
+});
+router.put('/settings', (req, res) => {
+  const b = req.body || {};
+  if (b.retentionMonths != null) logprune.setRetentionMonths(b.retentionMonths);
+  if (b.autoPrune != null) logprune.setAutoPrune(!!b.autoPrune);
+  res.json({
+    ok: true,
+    retentionMonths: logprune.retentionMonths(),
+    autoPrune: logprune.autoPruneEnabled(),
+  });
+});
+
+// Delete logs older than N months now (defaults to the configured retention).
+router.post('/prune', (req, res) => {
+  const months = (req.body && req.body.months) || logprune.retentionMonths();
+  const deleted = logprune.pruneOlderThan(months);
+  res.json({ ok: true, deleted, months });
+});
 
 // Recent persisted log lines for a channel (site-<id> or system).
 router.get('/history', (req, res) => {

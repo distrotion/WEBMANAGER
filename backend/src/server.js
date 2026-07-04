@@ -15,17 +15,17 @@ for (const d of [config.paths.logs, config.paths.certs, config.paths.services, c
   fs.mkdirSync(d, { recursive: true });
 }
 
-// Prune persisted logs older than 30 days (on boot + hourly) to bound the DB.
-const db = require('./db');
-const pruneLogs = () => {
+// Auto-prune persisted logs to the configured retention (on boot + hourly).
+const logprune = require('./logprune');
+const runPrune = () => {
   try {
-    db.prepare("DELETE FROM logs WHERE ts < datetime('now','-30 days')").run();
+    logprune.autoPrune();
   } catch {
     /* ignore */
   }
 };
-pruneLogs();
-setInterval(pruneLogs, 60 * 60 * 1000).unref();
+runPrune();
+setInterval(runPrune, 60 * 60 * 1000).unref();
 
 const app = express();
 app.use(cors());

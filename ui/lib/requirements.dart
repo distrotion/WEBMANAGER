@@ -49,6 +49,8 @@ class _RequirementsPageState extends State<RequirementsPage> {
               const SizedBox(height: 16),
               const GitCredentialsCard(),
               const SizedBox(height: 16),
+              const LogSettingsCard(),
+              const SizedBox(height: 16),
               _nginxControl(),
               const SizedBox(height: 24),
               _steps(),
@@ -332,6 +334,105 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
               padding: const EdgeInsets.only(top: 8),
               child: Text(_msg!, style: const TextStyle(fontSize: 12, color: Colors.lightBlueAccent)),
             ),
+        ]),
+      ),
+    );
+  }
+}
+
+// Log retention: keep last N months, auto-prune toggle, and a "clear old now" button.
+class LogSettingsCard extends StatefulWidget {
+  const LogSettingsCard({super.key});
+  @override
+  State<LogSettingsCard> createState() => _LogSettingsCardState();
+}
+
+class _LogSettingsCardState extends State<LogSettingsCard> {
+  int _months = 3;
+  bool _auto = true;
+  bool _loaded = false;
+  String? _msg;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await Api.instance.logSettings();
+      setState(() {
+        _months = (s['retentionMonths'] as num?)?.toInt() ?? 3;
+        _auto = s['autoPrune'] == true;
+        _loaded = true;
+      });
+    } catch (_) {
+      setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    await Api.instance.saveLogSettings(retentionMonths: _months, autoPrune: _auto);
+    if (mounted) setState(() => _msg = 'Saved.');
+  }
+
+  Future<void> _pruneNow() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Clear old logs?'),
+        content: Text('Delete all logs older than $_months month(s). Kept: last $_months month(s).'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final n = await Api.instance.pruneLogs(months: _months);
+    if (mounted) setState(() => _msg = 'Deleted $n old log line(s).');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: const [
+            Icon(Icons.receipt_long, size: 18),
+            SizedBox(width: 8),
+            Text('Logs retention', style: TextStyle(fontWeight: FontWeight.bold)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('Console logs are stored in the database. Keep the last N months; older ones are deleted.',
+              style: TextStyle(fontSize: 12, color: Colors.white60)),
+          const SizedBox(height: 12),
+          if (!_loaded)
+            const Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator()))
+          else
+            Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              const Text('Keep last'),
+              DropdownButton<int>(
+                value: _months,
+                items: const [1, 2, 3, 6, 12, 24]
+                    .map((m) => DropdownMenuItem(value: m, child: Text('$m month${m > 1 ? "s" : ""}')))
+                    .toList(),
+                onChanged: (v) => setState(() => _months = v!),
+              ),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Switch(value: _auto, onChanged: (v) => setState(() => _auto = v)),
+                const Text('Auto-delete (hourly)'),
+              ]),
+              FilledButton.tonalIcon(onPressed: _save, icon: const Icon(Icons.save, size: 16), label: const Text('Save')),
+              OutlinedButton.icon(
+                onPressed: _pruneNow,
+                icon: const Icon(Icons.delete_sweep, size: 16),
+                label: Text('Clear older than $_months mo now'),
+              ),
+              if (_msg != null) Text(_msg!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+            ]),
         ]),
       ),
     );
