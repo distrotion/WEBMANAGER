@@ -67,8 +67,11 @@ Write-Host ""
 if (-not $git) { Fail "Git is required. Install from https://git-scm.com then re-run." }
 if (-not $driveOk) { Fail "$Root is not writable. Re-run setup with a writable drive (default C:\webmanager)." }
 
-if (-not $node) {
-  Write-Host "Installing Node.js 22 LTS ..." -ForegroundColor Cyan
+# install/upgrade to Node 22 LTS when missing or too old (< 18). Node 23+ can't be
+# safely downgraded via MSI, so we only warn there.
+if ((-not $node) -or ($nodeMaj -lt 18)) {
+  $why = if (-not $node) { "not installed" } else { "v$nodeMaj too old" }
+  Write-Host "Installing Node.js 22 LTS ($why) ..." -ForegroundColor Cyan
   try {
     $idx = Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/" -UseBasicParsing
     $msi = ([regex]::Match($idx.Content, 'node-v22\.[0-9.]+-x64\.msi')).Value
@@ -77,13 +80,15 @@ if (-not $node) {
     Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/$msi" -OutFile $out -UseBasicParsing
     Start-Process msiexec.exe -ArgumentList "/i `"$out`" /qn /norestart" -Wait
     $env:Path = "$env:ProgramFiles\nodejs;$env:Path"
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "node still not found after install" }
-    Line $true "Node.js installed" (& node -v)
+    $nv2 = (& "$env:ProgramFiles\nodejs\node.exe" -v)
+    if (-not $nv2) { throw "node still not found after install" }
+    Line $true "Node.js installed" $nv2
   } catch {
     Fail "Node auto-install failed ($($_.Exception.Message)). Install Node 22 LTS from https://nodejs.org and re-run."
   }
 } elseif ($nodeMaj -ge 23) {
-  Write-Host "[warn] Node $v may break native modules; Node 22 LTS is recommended. Continuing..." -ForegroundColor Yellow
+  Write-Host "[warn] Node $v may break native modules; Node 22 LTS recommended." -ForegroundColor Yellow
+  Write-Host "       If install fails on better-sqlite3/node-pty, uninstall Node and install 22 LTS." -ForegroundColor Yellow
 }
 
 # --- install ---

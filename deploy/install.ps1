@@ -48,6 +48,7 @@ $nodeVer = (& node -v)
 Info "Node $nodeVer"
 if ($nodeVer -match '^v(\d+)') {
   $maj = [int]$Matches[1]
+  if ($maj -lt 18) { Die "Node $nodeVer is too old for native modules. Install Node 22 LTS (or run setup.cmd which does it for you)." }
   if ($maj -ge 23) { Warn "Node $nodeVer may break native modules (better-sqlite3/node-pty). Node 22 LTS recommended." }
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -131,8 +132,18 @@ $envLines = @(
 Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 
 Info "npm install (backend)"
+# drop stale native modules so npm re-fetches prebuilts matching the CURRENT node
+# (e.g. after a node upgrade) instead of a broken/mismatched build.
+foreach ($nm in @("better-sqlite3", "node-pty")) {
+  $p = "$Root\app\backend\node_modules\$nm"
+  if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+}
 Push-Location "$Root\app\backend"
 & npm install --omit=dev
+if ($LASTEXITCODE -ne 0) {
+  Pop-Location
+  Die "npm install failed. Usually means Node is not 22 LTS (native prebuild missing). Install Node 22 LTS and re-run."
+}
 Pop-Location
 
 # 4. nginx.conf -------------------------------------------------------------
