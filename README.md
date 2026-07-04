@@ -74,8 +74,8 @@ Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
 ```powershell
 .\scripts\start.cmd            # or: net start wm-manager
 .\scripts\stop.cmd             # or: net stop  wm-manager
-.\deploy\uninstall.ps1 -Root C:\webmanager           # remove services (keep data)
-.\deploy\uninstall.ps1 -Root C:\webmanager -Purge    # also delete C:\webmanager
+.\uninstall.cmd                # double-click: remove services + firewall (keeps data)
+.\uninstall.cmd -Purge         # also delete C:\webmanager
 ```
 More detail: [deploy/README-WINDOWS.md](deploy/README-WINDOWS.md).
 
