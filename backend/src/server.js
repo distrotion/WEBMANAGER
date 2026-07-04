@@ -36,6 +36,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true, root: config.ROOT }));
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/users', authMiddleware, require('./routes/users.routes'));
 app.use('/api/logs', authMiddleware, require('./routes/logs.routes'));
+app.use('/api/audit', authMiddleware, require('./routes/audit.routes'));
 app.use('/api/system', authMiddleware, require('./routes/system.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));

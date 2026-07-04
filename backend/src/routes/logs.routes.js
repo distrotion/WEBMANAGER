@@ -40,6 +40,26 @@ router.get('/history', (req, res) => {
   res.json(rows.reverse());
 });
 
+// Download a channel's full history as a .log text file.
+router.get('/download', (req, res) => {
+  const channel = req.query.channel || 'system';
+  const rows = db.prepare('SELECT line FROM logs WHERE channel=? ORDER BY id ASC').all(channel);
+  const text = rows.map((r) => r.line).join('\n');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${channel.replace(/[^\w.-]/g, '_')}.log"`);
+  res.send(text);
+});
+
+// Download a channel's full history as a .log text file.
+router.get('/download', (req, res) => {
+  const channel = req.query.channel || 'system';
+  const rows = db.prepare('SELECT line FROM logs WHERE channel=? ORDER BY id ASC').all(channel);
+  const text = rows.map((r) => r.line).join('\n');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${channel.replace(/[^\w.-]/g, '_')}.log"`);
+  res.send(text);
+});
+
 // Clear a channel's history.
 router.delete('/history', (req, res) => {
   const channel = req.query.channel;

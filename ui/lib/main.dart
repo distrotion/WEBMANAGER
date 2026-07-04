@@ -6,6 +6,7 @@ import 'requirements.dart';
 import 'folder_picker.dart';
 import 'users.dart';
 import 'shell_console.dart';
+import 'audit.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -192,6 +193,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UsersPage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
+              } else if (v == 'audit') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AuditPage()));
               } else if (v == 'password') {
                 await showDialog(context: context, builder: (_) => const _ChangePasswordDialog());
               } else if (v == 'logout') {
@@ -214,6 +217,8 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'users', child: ListTile(leading: Icon(Icons.group), title: Text('Users'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'audit', child: ListTile(leading: Icon(Icons.history), title: Text('Audit log'), dense: true)),
               const PopupMenuItem(value: 'password', child: ListTile(leading: Icon(Icons.password), title: Text('Change password'), dense: true)),
               const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout), title: Text('Logout'), dense: true)),
             ],

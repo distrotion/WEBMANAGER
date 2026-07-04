@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'api.dart';
+import 'download.dart';
 
 /// Terminal-style panel that subscribes to a log channel over WebSocket and
 /// renders streamed command output. Gives the "open console" feel without a shell.
@@ -97,6 +98,16 @@ class _LogConsoleState extends State<LogConsole> {
               Text('console · ${widget.channel}',
                   style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12)),
               const Spacer(),
+              IconButton(
+                tooltip: 'Download .log',
+                icon: const Icon(Icons.download, size: 16, color: Color(0xFF9CA3AF)),
+                onPressed: () async {
+                  try {
+                    final text = await Api.instance.downloadLogText(widget.channel);
+                    downloadText('${widget.channel}.log', text);
+                  } catch (_) {}
+                },
+              ),
               IconButton(
                 tooltip: 'Clear (also deletes stored history)',
                 icon: const Icon(Icons.clear_all, size: 16, color: Color(0xFF9CA3AF)),

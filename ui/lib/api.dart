@@ -246,6 +246,23 @@ class Api {
         }));
   }
 
+  /// Full log history for a channel, as raw text (for download).
+  Future<String> downloadLogText(String channel) async {
+    final r = await http.get(
+      _u('/api/logs/download?channel=${Uri.encodeQueryComponent(channel)}'),
+      headers: _headers,
+    );
+    if (r.statusCode != 200) throw Exception('download failed: ${r.statusCode}');
+    return r.body;
+  }
+
+  /// Audit trail (admin): who did what, when.
+  Future<List<Map<String, dynamic>>> audit({int limit = 300}) async {
+    final r = await http.get(_u('/api/audit?limit=$limit'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('audit failed: ${r.statusCode}');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
   /// Delete logs older than [months] now; returns how many rows were removed.
   Future<int> pruneLogs({int? months}) async {
     final r = await http.post(_u('/api/logs/prune'),
