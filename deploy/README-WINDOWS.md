@@ -2,32 +2,31 @@
 
 End-to-end install. Target layout lives under `C:\webmanager`.
 
-## 1. Prerequisites (install on the server, on PATH)
-- **Node.js LTS** — https://nodejs.org
+## 1. Prerequisites (on PATH)
+- **Node.js 22 LTS** — https://nodejs.org  *(Node 23+ can break native modules)*
 - **Git** — https://git-scm.com
 
-## 2. Download tools into place
-- **nssm.exe** — https://nssm.cc/download → put at `C:\webmanager\tools\nssm.exe`
-- **nginx** — https://nginx.org/en/download.html → extract so `C:\webmanager\nginx\nginx.exe` exists
-- **win-acme** — https://www.win-acme.com → extract to `C:\webmanager\tools\win-acme\` (`wacs.exe`)
+Nothing else to download — **nssm is bundled** in the repo and **nginx is auto-downloaded**
+by the installer. The UI is pre-built and committed, so Flutter is not needed on the server.
+(For SSL, drop **win-acme** into `C:\webmanager\tools\win-acme\` yourself — https://www.win-acme.com)
 
-(The installer creates the folders; you just drop these in. It will warn about any missing.)
-
-## 3. Build the UI (on a dev machine with Flutter, or the server if Flutter is installed)
-```
-cd ui
-flutter build web --release
-```
-
-## 4. Run the installer (elevated PowerShell)
+## 2. Clone + run the installer (elevated PowerShell)
 ```powershell
-cd deploy
+git clone https://github.com/distrotion/WEBMANAGER C:\src\WEBMANAGER
+cd C:\src\WEBMANAGER\deploy
 .\install.ps1 -Root C:\webmanager -AdminPass "<choose-a-password>"
 ```
 > **Pick a writable drive for `-Root`.** `C:\webmanager` is the safe default. Avoid `D:`
 > unless you know it's a real data drive — on many servers `D:` is the DVD drive (read-only),
 > which fails with *"Access to the path is denied"*. Check drives with
 > `Get-PSDrive -PSProvider FileSystem`.
+
+The installer checks Node/Git, drops in nssm, downloads nginx, copies backend + built UI
+into `C:\webmanager\app`, writes `.env` (random JWT secret), `npm install`s the backend,
+and registers **wm-manager** + **nginx** as NSSM services that:
+- **auto-start on every boot / reboot**
+- **auto-restart on crash**
+- start in the right order (**nginx depends on wm-manager**, which generates `nginx.conf`)
 This copies backend + built UI into `C:\webmanager\app`, writes `.env` (with a random
 JWT secret), `npm install`s the backend, and registers **wm-manager** + **nginx** as
 NSSM services that:
