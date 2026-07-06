@@ -151,9 +151,16 @@ async function deployNode(site, user) {
     await run('npm', ['install', '--omit=dev'], { cwd: repoDir, channel, shell: true });
   }
   await pm2.restart(site, channel); // starts on first run
-  nginx.rebuildFront();
-  const t = await nginx.test(channel);
-  if (t.code === 0) await nginx.reload(channel);
+
+  // A node app is reached directly on its port. Only touch nginx if it's also
+  // exposed via a front (subdomain/path proxy).
+  if (site.exposure_mode) {
+    nginx.rebuildFront();
+    const t = await nginx.test(channel);
+    if (t.code === 0) await nginx.reload(channel);
+  }
+  // open the app's direct port in the firewall for LAN access
+  if (site.direct_port) await require('./firewall').openPort(site.direct_port, channel);
   db.prepare(
     `UPDATE sites SET status='running', last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
   ).run(commit, site.id);
