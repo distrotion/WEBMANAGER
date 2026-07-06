@@ -618,6 +618,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     final isStatic = runtime == 'static';
     final isProcess = runtime == 'nodered' || runtime == 'node';
     final portOn = s['direct_port_enabled'] == 1;
+    final hasExposure = s['exposure_mode'] != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -645,35 +646,38 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Wrap(spacing: 8, runSpacing: 8, children: [
+            _group('Open', [
               if (_directUrl() != null)
                 _btn('Open :${s['direct_port']}', Icons.open_in_new, () => _open(_directUrl()!)),
-              if (_frontUrl() != null)
-                _btn('Open front', Icons.public, () => _open(_frontUrl()!)),
+              if (_frontUrl() != null) _btn('Open front', Icons.public, () => _open(_frontUrl()!)),
+            ]),
+            _group('Deploy & run', [
               if (isStatic || runtime == 'node')
                 _btn('Pull & Deploy', Icons.cloud_download, () => _act('deploy')),
               if (runtime == 'nodered') _btn('Start', Icons.play_arrow, () => _act('start')),
-              if (isProcess) ...[
-                _btn('Stop', Icons.stop, () => _act('stop')),
-                _btn('Restart', Icons.restart_alt, () => _act('restart')),
-                _btn('View log', Icons.article, () => _act('logs')),
-              ],
+              if (isProcess) _btn('Restart', Icons.restart_alt, () => _act('restart')),
+              if (isProcess) _btn('Stop', Icons.stop, () => _act('stop')),
+              if (isProcess) _btn('View log', Icons.article, () => _act('logs')),
+            ]),
+            _group('Web · front', [
               if (isStatic && s['direct_port'] != null)
                 _btn(portOn ? 'Disable port' : 'Enable port', Icons.electrical_services, () async {
                   await _act('port', {'enabled': !portOn});
                   setState(() => s['direct_port_enabled'] = portOn ? 0 : 1);
                 }),
               _btn('Reload nginx', Icons.refresh, () => _act('reload')),
-              if (Api.instance.isAdmin)
+              if (hasExposure) _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
+              if (hasExposure) _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
+            ]),
+            if (Api.instance.isAdmin)
+              _group('Admin', [
                 _btn('Console', Icons.terminal, () {
                   Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => ShellConsolePage(site: s['name'], title: 'Console · ${s['name']}'),
                   ));
                 }),
-              _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
-              _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
-              _btn('Delete', Icons.delete, _confirmDelete, danger: true),
-            ]),
+              ]),
+            _group('Danger', [_btn('Delete', Icons.delete, _confirmDelete, danger: true)]),
             const SizedBox(height: 12),
             _infoBar(),
             if (_isProcess) ...[
@@ -761,6 +765,20 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
       await Api.instance.deleteSite(s['id']);
       if (mounted) Navigator.of(context).pop();
     }
+  }
+
+  // A labelled row of action buttons; hidden entirely when it has no buttons.
+  Widget _group(String label, List<Widget> buttons) {
+    if (buttons.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label.toUpperCase(),
+            style: const TextStyle(fontSize: 10.5, color: Colors.white38, letterSpacing: 0.8)),
+        const SizedBox(height: 5),
+        Wrap(spacing: 8, runSpacing: 8, children: buttons),
+      ]),
+    );
   }
 
   Widget _btn(String label, IconData icon, VoidCallback onTap, {bool danger = false}) {
