@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
@@ -331,6 +332,28 @@ class _SitesPageState extends State<SitesPage> {
   }
 }
 
+// KEY=VALUE lines <-> JSON env map.
+String _envJsonToLines(dynamic envJson) {
+  if (envJson == null || '$envJson'.isEmpty) return '';
+  try {
+    final m = jsonDecode(envJson as String) as Map<String, dynamic>;
+    return m.entries.map((e) => '${e.key}=${e.value}').join('\n');
+  } catch (_) {
+    return '';
+  }
+}
+
+String? _linesToEnvJson(String text) {
+  final m = <String, String>{};
+  for (final line in text.split('\n')) {
+    final t = line.trim();
+    if (t.isEmpty || !t.contains('=')) continue;
+    final i = t.indexOf('=');
+    m[t.substring(0, i).trim()] = t.substring(i + 1).trim();
+  }
+  return m.isEmpty ? null : jsonEncode(m);
+}
+
 // ---------------- Create / edit site ----------------
 class CreateSiteDialog extends StatefulWidget {
   final Map<String, dynamic>? site; // non-null = edit an existing site
@@ -347,6 +370,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   final _repo = TextEditingController();
   final _local = TextEditingController();
   final _branch = TextEditingController();
+  final _entry = TextEditingController();
+  final _env = TextEditingController();
   final _port = TextEditingController();
   final _subdomain = TextEditingController();
   final _domain = TextEditingController();
@@ -367,6 +392,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _repo.text = s['repo_url'] ?? '';
       _local.text = s['local_path'] ?? '';
       _branch.text = s['branch'] ?? 'main';
+      _entry.text = s['entry_file'] ?? '';
+      _env.text = _envJsonToLines(s['env_json']);
       _port.text = s['direct_port']?.toString() ?? '';
       _subdomain.text = s['subdomain'] ?? '';
       _domain.text = s['domain'] ?? '';
@@ -397,6 +424,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
         'repo_url': _source == 'git' ? _repo.text.trim() : null,
         'local_path': _source == 'local' ? _local.text.trim() : null,
         'branch': _branch.text.trim(),
+        if (_runtime == 'node') 'entry_file': _entry.text.trim().isEmpty ? null : _entry.text.trim(),
+        if (_runtime == 'node') 'env_json': _linesToEnvJson(_env.text),
         'direct_port': _port.text.trim().isNotEmpty ? int.tryParse(_port.text.trim()) : null,
         'exposure_mode': _exposure,
         'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
@@ -494,6 +523,26 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                     ),
                   ),
                 ],
+              ],
+              if (_runtime == 'node') ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _entry,
+                  decoration: const InputDecoration(
+                    labelText: 'Entry file',
+                    hintText: 'default: server.js  (see package.json "main")',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _env,
+                  minLines: 1,
+                  maxLines: 5,
+                  decoration: const InputDecoration(
+                    labelText: 'Env vars (one per line: KEY=VALUE)',
+                    hintText: 'DB_HOST=1.2.3.4\nNODE_ENV=production',
+                  ),
+                ),
               ],
               const SizedBox(height: 8),
               TextField(

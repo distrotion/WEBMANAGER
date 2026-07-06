@@ -29,9 +29,9 @@ router.post('/', (req, res) => {
       .prepare(
         `INSERT INTO sites
          (name, runtime, source_type, repo_url, local_path, branch, direct_port, direct_port_enabled,
-          exposure_mode, subdomain, path, domain, ssl_enabled, service_name)
+          exposure_mode, subdomain, path, domain, ssl_enabled, service_name, entry_file, env_json, pm2_instances)
          VALUES (@name,@runtime,@source_type,@repo_url,@local_path,@branch,@direct_port,@direct_port_enabled,
-          @exposure_mode,@subdomain,@path,@domain,@ssl_enabled,@service_name)`
+          @exposure_mode,@subdomain,@path,@domain,@ssl_enabled,@service_name,@entry_file,@env_json,@pm2_instances)`
       )
       .run({
         name: b.name,
@@ -40,6 +40,9 @@ router.post('/', (req, res) => {
         repo_url: b.repo_url || null,
         local_path: b.local_path || null,
         branch: b.branch || 'main',
+        entry_file: b.entry_file || null,
+        env_json: b.env_json || null,
+        pm2_instances: b.pm2_instances || 1,
         direct_port: b.direct_port || null,
         direct_port_enabled: b.direct_port_enabled === false ? 0 : 1,
         exposure_mode: b.exposure_mode || null,
@@ -70,6 +73,9 @@ const UPDATABLE = [
   'domain',
   'ssl_enabled',
   'service_name',
+  'entry_file',
+  'env_json',
+  'pm2_instances',
 ];
 
 router.put('/:id', (req, res) => {
