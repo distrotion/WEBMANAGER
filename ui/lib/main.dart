@@ -668,6 +668,11 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     final isProcess = runtime == 'nodered' || runtime == 'node';
     final portOn = s['direct_port_enabled'] == 1;
     final hasExposure = s['exposure_mode'] != null;
+    final runLabel = runtime == 'node'
+        ? 'Node.js (Express)'
+        : runtime == 'nodered'
+            ? 'Node-RED'
+            : 'Static site';
 
     return Scaffold(
       appBar: AppBar(
@@ -700,7 +705,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
                 _btn('Open :${s['direct_port']}', Icons.open_in_new, () => _open(_directUrl()!)),
               if (_frontUrl() != null) _btn('Open front', Icons.public, () => _open(_frontUrl()!)),
             ]),
-            _group('Deploy & run', [
+            _group(runLabel, [
               if (isStatic || runtime == 'node')
                 _btn('Pull & Deploy', Icons.cloud_download, () => _act('deploy')),
               if (runtime == 'nodered') _btn('Start', Icons.play_arrow, () => _act('start')),
