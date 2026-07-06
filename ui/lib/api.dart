@@ -206,6 +206,17 @@ class Api {
     await http.delete(_u('/api/sites/$id'), headers: _headers);
   }
 
+  /// PM2 metrics for a process site: {status, cpu, memory, restarts, uptime, pid}.
+  Future<Map<String, dynamic>> processMetrics(int id) async {
+    try {
+      final r = await http.get(_u('/api/sites/$id/metrics'), headers: _headers);
+      if (r.statusCode != 200) return {};
+      return jsonDecode(r.body) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
   /// Fire a button action that streams its logs over WebSocket.
   Future<void> action(int id, String path, [Map<String, dynamic>? body]) async {
     await http.post(_u('/api/sites/$id/$path'),

@@ -5,7 +5,7 @@ const { emitLog } = require('./logbus');
 // Spawn a command and stream stdout/stderr line-by-line to the given log channel.
 // Resolves with { code, out } — never rejects, so callers can branch on exit code.
 // `redact` (a secret string) is masked in everything shown/streamed to the log.
-function run(cmd, args, { cwd, channel = 'system', env, redact } = {}) {
+function run(cmd, args, { cwd, channel = 'system', env, redact, shell } = {}) {
   const mask = (s) => (redact ? s.split(redact).join('***') : s);
   return new Promise((resolve) => {
     emitLog(channel, mask(`$ ${cmd} ${args.join(' ')}`));
@@ -15,6 +15,9 @@ function run(cmd, args, { cwd, channel = 'system', env, redact } = {}) {
         cwd,
         env: env ? { ...process.env, ...env } : process.env,
         windowsHide: true,
+        // shell:true is needed to run .cmd/.bat (e.g. npm) on Windows/Node 20+
+        // where spawning them directly throws EINVAL.
+        shell: !!shell,
       });
     } catch (e) {
       emitLog(channel, mask(`[error] ${e.message}`));

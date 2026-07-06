@@ -60,5 +60,11 @@ module.exports = {
     wacs: process.env.WACS_EXE || (process.platform === 'win32' ? path.join(ROOT, 'tools', 'win-acme', 'wacs.exe') : 'wacs'),
     email: process.env.ACME_EMAIL || 'admin@example.com',
   },
+  // PM2 manages node/Node-RED apps. We invoke it as `node <pm2-bin>` (a local dep),
+  // so no pm2.cmd spawn (avoids EINVAL on Windows/Node 20+). PM2_HOME keeps its
+  // state/dump inside ROOT so it survives reboots and is per-install.
+  pm2: {
+    home: process.env.PM2_HOME || path.join(ROOT, 'pm2'),
+  },
   nodeExe: process.env.NODE_EXE || process.execPath,
 };

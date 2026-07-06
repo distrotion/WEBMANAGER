@@ -30,6 +30,16 @@ if (-not $Yes) {
 
 $nssm = "$Root\tools\nssm.exe"
 
+# --- PM2-managed apps (node / Node-RED) ---
+$pm2bin = "$Root\app\backend\node_modules\pm2\bin\pm2"
+$node = (Get-Command node -ErrorAction SilentlyContinue)
+if ($node -and (Test-Path $pm2bin)) {
+  Info "stopping PM2 apps"
+  $env:PM2_HOME = "$Root\pm2"
+  & $node.Source $pm2bin delete all 2>$null
+  & $node.Source $pm2bin kill 2>$null
+}
+
 # --- core services ---
 foreach ($svc in @("nginx", "wm-manager")) {
   if (Get-Service $svc -ErrorAction SilentlyContinue) {

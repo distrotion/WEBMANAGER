@@ -96,6 +96,9 @@ router.delete('/:id', (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   nginx.removeSiteConfigs(s);
+  if (s.runtime === 'node' || s.runtime === 'nodered') {
+    require('../pm2').remove(s, 'system').catch(() => {});
+  }
   if (s.direct_port) firewall.closePort(s.direct_port, 'system').catch(() => {});
   db.prepare('DELETE FROM sites WHERE id=?').run(s.id);
   db.prepare('DELETE FROM releases WHERE site_id=?').run(s.id);

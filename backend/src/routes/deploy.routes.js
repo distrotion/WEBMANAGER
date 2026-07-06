@@ -17,7 +17,7 @@ router.post('/:id/deploy', (req, res) => {
     s.runtime === 'node'
       ? deploy.deployNode(s, req.user)
       : s.runtime === 'nodered'
-      ? require('../services').start(s, channel)
+      ? require('../pm2').start(s, channel)
       : deploy.deployStatic(s, req.user);
   Promise.resolve(job).catch((e) => require('../logbus').emitLog(channel, `[fatal] ${e.message}`));
 });

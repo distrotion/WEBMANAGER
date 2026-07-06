@@ -109,30 +109,48 @@ async function deployStatic(site, user) {
   return { ok: true, ts, commit };
 }
 
-// Pull a node backend repo, install deps, (re)start its NSSM service.
+// Get a node backend's code (git pull OR copy local folder), install deps, and
+// (re)start its PM2 process. Runs from sites/<name>/repo.
 async function deployNode(site, user) {
-  const services = require('./services');
+  const pm2 = require('./pm2');
   const channel = `site-${site.id}`;
   emitLog(channel, `=== Deploy ${site.name} (node) ===`);
-  if (!site.repo_url) {
-    emitLog(channel, '[deploy] no repo_url set, abort');
-    return { ok: false, step: 'config' };
-  }
-  const pull = await git.ensureRepo(site, channel);
-  if (pull.code !== 0) {
-    db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
-    return { ok: false, step: 'git' };
-  }
-  const commit = await git.currentCommit(site);
   const repoDir = git.repoDir(site);
+  let commit = null;
+
+  if (site.source_type === 'local') {
+    if (!site.local_path || !fs.existsSync(site.local_path)) {
+      emitLog(channel, `[deploy] local path not found: ${site.local_path}`);
+      db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+      return { ok: false, step: 'config' };
+    }
+    emitLog(channel, `[deploy] local source ${site.local_path}`);
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.cpSync(site.local_path, repoDir, {
+      recursive: true,
+      filter: (s) => {
+        const parts = s.split(path.sep);
+        return !parts.includes('.git') && !parts.includes('node_modules');
+      },
+    });
+  } else {
+    if (!site.repo_url) {
+      emitLog(channel, '[deploy] no repo_url set, abort');
+      return { ok: false, step: 'config' };
+    }
+    const pull = await git.ensureRepo(site, channel);
+    if (pull.code !== 0) {
+      db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+      return { ok: false, step: 'git' };
+    }
+    commit = await git.currentCommit(site);
+  }
+
   if (fs.existsSync(path.join(repoDir, 'package.json'))) {
     emitLog(channel, '[deploy] npm install --omit=dev');
-    await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--omit=dev'], {
-      cwd: repoDir,
-      channel,
-    });
+    await run('npm', ['install', '--omit=dev'], { cwd: repoDir, channel, shell: true });
   }
-  await services.restart(site, channel); // installs the service on first run
+  await pm2.restart(site, channel); // starts on first run
   nginx.rebuildFront();
   const t = await nginx.test(channel);
   if (t.code === 0) await nginx.reload(channel);

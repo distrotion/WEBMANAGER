@@ -27,6 +27,9 @@ const runPrune = () => {
 runPrune();
 setInterval(runPrune, 60 * 60 * 1000).unref();
 
+// Restore PM2-managed apps after a reboot (best effort).
+require('./pm2').ensureUp().catch(() => {});
+
 const app = express();
 app.use(cors());
 app.use(express.json());

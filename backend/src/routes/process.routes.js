@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const db = require('../db');
-const services = require('../services');
+const pm2 = require('../pm2');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -28,19 +28,24 @@ function action(name, fn) {
   };
 }
 
-router.post('/:id/start', requireProcess, action('start', services.start));
-router.post('/:id/stop', requireProcess, action('stop', services.stop));
-router.post('/:id/restart', requireProcess, action('restart', services.restart));
+router.post('/:id/start', requireProcess, action('start', pm2.start));
+router.post('/:id/stop', requireProcess, action('stop', pm2.stop));
+router.post('/:id/restart', requireProcess, action('restart', pm2.restart));
+
+// Live CPU/RAM/restarts/uptime for the site's process (from `pm2 jlist`).
+router.get('/:id/metrics', requireProcess, async (req, res) => {
+  res.json(await pm2.metrics(req.site));
+});
 
 router.get('/:id/status', requireProcess, async (req, res) => {
-  const status = await services.refreshStatus(req.site);
-  res.json({ status });
+  const m = await pm2.refreshStatus(req.site);
+  res.json({ status: m.status });
 });
 
 router.post('/:id/logs', requireProcess, (req, res) => {
   const channel = `site-${req.site.id}`;
   res.json({ started: true, channel });
-  services.tailLog(req.site, channel, 300);
+  pm2.tailLog(req.site, channel, 300);
 });
 
 module.exports = router;

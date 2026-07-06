@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
@@ -548,6 +549,30 @@ class SiteDetailPage extends StatefulWidget {
 class _SiteDetailPageState extends State<SiteDetailPage> {
   late Map<String, dynamic> s = widget.site;
   String get _channel => 'site-${s['id']}';
+  Map<String, dynamic> _metrics = {};
+  Timer? _metricsTimer;
+
+  bool get _isProcess => s['runtime'] == 'nodered' || s['runtime'] == 'node';
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isProcess) {
+      _loadMetrics();
+      _metricsTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMetrics());
+    }
+  }
+
+  @override
+  void dispose() {
+    _metricsTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadMetrics() async {
+    final m = await Api.instance.processMetrics(s['id']);
+    if (mounted) setState(() => _metrics = m);
+  }
 
   Future<void> _act(String path, [Map<String, dynamic>? body]) async {
     try {
@@ -651,12 +676,59 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
             ]),
             const SizedBox(height: 12),
             _infoBar(),
+            if (_isProcess) ...[
+              const SizedBox(height: 8),
+              _metricsBar(),
+            ],
             const SizedBox(height: 12),
             Expanded(child: LogConsole(channel: _channel)),
           ],
         ),
       ),
     );
+  }
+
+  Widget _metricsBar() {
+    final m = _metrics;
+    if (m.isEmpty) return const SizedBox.shrink();
+    final status = (m['status'] ?? 'unknown').toString();
+    final online = status == 'online';
+    final mem = m['memory'] is num ? '${(m['memory'] / 1048576).toStringAsFixed(0)} MB' : '-';
+    final cpu = m['cpu'] is num ? '${m['cpu']}%' : '-';
+    String up = '-';
+    if (m['uptime'] is num && online) {
+      final secs = (DateTime.now().millisecondsSinceEpoch - (m['uptime'] as num)) ~/ 1000;
+      if (secs >= 0) {
+        if (secs < 60) {
+          up = '${secs}s';
+        } else if (secs < 3600) {
+          up = '${secs ~/ 60}m';
+        } else if (secs < 86400) {
+          up = '${secs ~/ 3600}h';
+        } else {
+          up = '${secs ~/ 86400}d';
+        }
+      }
+    }
+    Widget chip(IconData i, String v) => Chip(
+          avatar: Icon(i, size: 14),
+          label: Text(v, style: const TextStyle(fontSize: 11)),
+          visualDensity: VisualDensity.compact,
+        );
+    final color = online ? Colors.green : (status == 'errored' ? Colors.red : Colors.grey);
+    return Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+      Chip(
+        label: Text(status, style: const TextStyle(fontSize: 11)),
+        backgroundColor: color.withValues(alpha: 0.2),
+        side: BorderSide(color: color),
+        visualDensity: VisualDensity.compact,
+      ),
+      chip(Icons.memory, 'CPU $cpu'),
+      chip(Icons.sd_storage, mem),
+      chip(Icons.restart_alt, 'restarts ${m['restarts'] ?? 0}'),
+      chip(Icons.schedule, 'up $up'),
+      if (m['instances'] != null && (m['instances'] as num) > 1) chip(Icons.copy_all, 'x${m['instances']}'),
+    ]);
   }
 
   Widget _infoBar() {

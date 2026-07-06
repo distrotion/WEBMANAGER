@@ -76,6 +76,9 @@ CREATE INDEX IF NOT EXISTS idx_logs_channel ON logs(channel, id);
 for (const [col, def] of [
   ['source_type', "TEXT NOT NULL DEFAULT 'git'"],
   ['local_path', 'TEXT'],
+  ['pm2_instances', 'INTEGER DEFAULT 1'],
+  ['entry_file', 'TEXT'],
+  ['env_json', 'TEXT'],
 ]) {
   try {
     db.prepare(`ALTER TABLE sites ADD COLUMN ${col} ${def}`).run();

@@ -127,7 +127,8 @@ $envLines = @(
   "NGINX_EXE=$Root\nginx\nginx.exe",
   "NGINX_PREFIX=$Root\nginx",
   "NSSM_EXE=$Root\tools\nssm.exe",
-  "WACS_EXE=$Root\tools\win-acme\wacs.exe"
+  "WACS_EXE=$Root\tools\win-acme\wacs.exe",
+  "PM2_HOME=$Root\pm2"
 )
 Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 
