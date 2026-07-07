@@ -713,16 +713,19 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
               if (isProcess) _btn('Stop', Icons.stop, () => _act('stop')),
               if (isProcess) _btn('View log', Icons.article, () => _act('logs')),
             ]),
-            _group('Web · front', [
-              if (isStatic && s['direct_port'] != null)
-                _btn(portOn ? 'Disable port' : 'Enable port', Icons.electrical_services, () async {
-                  await _act('port', {'enabled': !portOn});
-                  setState(() => s['direct_port_enabled'] = portOn ? 0 : 1);
-                }),
-              _btn('Reload nginx', Icons.refresh, () => _act('reload')),
-              if (hasExposure) _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
-              if (hasExposure) _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
-            ]),
+            // nginx/SSL only matter for static sites or anything with a front exposure.
+            // A plain node/Node-RED app (no front) is PM2-only — no web section.
+            if (isStatic || hasExposure)
+              _group('Web · front', [
+                if (isStatic && s['direct_port'] != null)
+                  _btn(portOn ? 'Disable port' : 'Enable port', Icons.electrical_services, () async {
+                    await _act('port', {'enabled': !portOn});
+                    setState(() => s['direct_port_enabled'] = portOn ? 0 : 1);
+                  }),
+                _btn('Reload nginx', Icons.refresh, () => _act('reload')),
+                if (hasExposure) _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
+                if (hasExposure) _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
+              ]),
             if (Api.instance.isAdmin)
               _group('Admin', [
                 _btn('Console', Icons.terminal, () {
