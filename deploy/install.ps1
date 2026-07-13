@@ -140,7 +140,12 @@ foreach ($nm in @("better-sqlite3", "node-pty")) {
   if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
 }
 Push-Location "$Root\app\backend"
-& npm install --omit=dev
+# Invoke npm as `node npm-cli.js` directly: the npm.ps1 shim that ships with new
+# Node mangles arguments under some PowerShell hosts ('Unknown command: "pm"').
+$NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
+$NpmCli = Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js"
+& $NodeExe $NpmCli install --omit=dev
 if ($LASTEXITCODE -ne 0) {
   Pop-Location
   Die "npm install failed. Usually means Node is not 22 LTS (native prebuild missing). Install Node 22 LTS and re-run."

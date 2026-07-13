@@ -10,6 +10,9 @@ New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Push-Location $dir
 if (-not (Test-Path "$dir\package.json")) { '{ "name": "wm-nodered-runtime", "private": true }' | Set-Content "$dir\package.json" }
 Write-Host "[nodered] installing node-red into $dir ..." -ForegroundColor Cyan
-& npm install node-red
+# node npm-cli.js directly — the npm.ps1 shim mangles args on some hosts
+$NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
+& $NodeExe (Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js") install node-red
 Pop-Location
 Write-Host "[nodered] done. red.js at $dir\node_modules\node-red\red.js" -ForegroundColor Green
