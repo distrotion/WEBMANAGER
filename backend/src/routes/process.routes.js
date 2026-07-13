@@ -28,6 +28,16 @@ function action(name, fn) {
   };
 }
 
+// Live metrics for ALL wm-* PM2 apps in one call (drives the sites-list monit).
+// Placed before /:id routes so 'pm2' isn't parsed as a site id.
+router.get('/pm2/overview', async (req, res) => {
+  try {
+    res.json(await pm2.overview());
+  } catch {
+    res.json([]);
+  }
+});
+
 router.post('/:id/start', requireProcess, action('start', pm2.start));
 router.post('/:id/stop', requireProcess, action('stop', pm2.stop));
 router.post('/:id/restart', requireProcess, action('restart', pm2.restart));

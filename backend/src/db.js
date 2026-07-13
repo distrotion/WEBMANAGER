@@ -79,6 +79,7 @@ for (const [col, def] of [
   ['pm2_instances', 'INTEGER DEFAULT 1'],
   ['entry_file', 'TEXT'],
   ['env_json', 'TEXT'],
+  ['autodeploy', 'INTEGER DEFAULT 0'],
 ]) {
   try {
     db.prepare(`ALTER TABLE sites ADD COLUMN ${col} ${def}`).run();

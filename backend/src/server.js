@@ -30,6 +30,9 @@ setInterval(runPrune, 60 * 60 * 1000).unref();
 // Restore PM2-managed apps after a reboot (best effort).
 require('./pm2').ensureUp().catch(() => {});
 
+// CI/CD: poll git remotes and auto-deploy sites that have autodeploy enabled.
+require('./autodeploy').start();
+
 const app = express();
 app.use(cors());
 app.use(express.json());

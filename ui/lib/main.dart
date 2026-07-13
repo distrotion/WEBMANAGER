@@ -145,11 +145,27 @@ class SitesPage extends StatefulWidget {
 
 class _SitesPageState extends State<SitesPage> {
   late Future<List<Map<String, dynamic>>> _future;
+  // Live PM2 metrics keyed by site name (from /pm2/overview), polled every 3s.
+  Map<String, Map<String, dynamic>> _overview = {};
+  Timer? _monitTimer;
 
   @override
   void initState() {
     super.initState();
     _reload();
+    _pollOverview();
+    _monitTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollOverview());
+  }
+
+  @override
+  void dispose() {
+    _monitTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _pollOverview() async {
+    final o = await Api.instance.pm2Overview();
+    if (mounted) setState(() => _overview = o);
   }
 
   void _reload() => setState(() => _future = Api.instance.sites());
@@ -165,8 +181,10 @@ class _SitesPageState extends State<SitesPage> {
   Color _statusColor(String? s) {
     switch (s) {
       case 'running':
+      case 'online':
         return Colors.green;
       case 'error':
+      case 'errored':
         return Colors.red;
       default:
         return Colors.grey;
@@ -278,11 +296,29 @@ class _SitesPageState extends State<SitesPage> {
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, i) {
         final s = sites[i];
+        final m = _overview[s['name']]; // live PM2 metrics for this app (null for web)
+        final liveStatus = (m?['status'] as String?) ?? s['status'];
         return Card(
           child: ListTile(
             leading: Icon(_runtimeIcon(s['runtime'])),
             title: Text(s['name'], style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(_subtitle(s)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_subtitle(s)),
+                if (m != null) _monitLine(m),
+                if (s['autodeploy'] == 1)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.sync, size: 12, color: Colors.lightBlueAccent),
+                      SizedBox(width: 3),
+                      Text('auto-deploy', style: TextStyle(fontSize: 11, color: Colors.lightBlueAccent)),
+                    ]),
+                  ),
+              ],
+            ),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               if (_openUrl(s) != null)
                 IconButton(
@@ -293,9 +329,9 @@ class _SitesPageState extends State<SitesPage> {
               if (s['ssl_enabled'] == 1) const Icon(Icons.lock, size: 16, color: Colors.greenAccent),
               const SizedBox(width: 8),
               Chip(
-                label: Text(s['status'] ?? 'new', style: const TextStyle(fontSize: 11)),
-                backgroundColor: _statusColor(s['status']).withValues(alpha: 0.2),
-                side: BorderSide(color: _statusColor(s['status'])),
+                label: Text(liveStatus ?? 'new', style: const TextStyle(fontSize: 11)),
+                backgroundColor: _statusColor(liveStatus).withValues(alpha: 0.2),
+                side: BorderSide(color: _statusColor(liveStatus)),
               ),
             ]),
             onTap: () async {
@@ -324,6 +360,29 @@ class _SitesPageState extends State<SitesPage> {
       return 'http://$host:${s['direct_port']}';
     }
     return null;
+  }
+
+  // Live CPU / RAM / restarts line for a PM2 app (from /pm2/overview).
+  Widget _monitLine(Map<String, dynamic> m) {
+    final cpu = (m['cpu'] as num?)?.toDouble();
+    final memBytes = (m['memory'] as num?)?.toDouble();
+    final restarts = (m['restarts'] as num?)?.toInt() ?? 0;
+    final mem = memBytes == null ? null : (memBytes / (1024 * 1024)).toStringAsFixed(0);
+    TextSpan chip(IconData i, String t) => TextSpan(children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Icon(i, size: 12, color: Colors.white54),
+          ),
+          TextSpan(text: ' $t   ', style: const TextStyle(fontSize: 11, color: Colors.white70)),
+        ]);
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text.rich(TextSpan(children: [
+        if (cpu != null) chip(Icons.memory, '${cpu.toStringAsFixed(0)}%'),
+        if (mem != null) chip(Icons.sd_storage, '$mem MB'),
+        if (restarts > 0) chip(Icons.restart_alt, '$restarts'),
+      ])),
+    );
   }
 
   String _subtitle(Map<String, dynamic> s) {
@@ -393,6 +452,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   late String _runtime;
   late String _source;
   late String _exposure;
+  bool _autodeploy = false;
   String? _error;
   bool _busy = false;
 
@@ -415,6 +475,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _runtime = s['runtime'] ?? 'static';
       _source = s['source_type'] ?? 'git';
       _exposure = s['exposure_mode'] ?? 'none';
+      _autodeploy = s['autodeploy'] == 1;
     } else {
       // creating → prefill from remembered config
       _branch.text = _cfg['branch'] ?? 'main';
@@ -441,6 +502,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
         if (_runtime == 'node') 'entry_file': _entry.text.trim().isEmpty ? null : _entry.text.trim(),
         if (_runtime == 'node') 'env_json': _linesToEnvJson(_env.text),
         'direct_port': _port.text.trim().isNotEmpty ? int.tryParse(_port.text.trim()) : null,
+        'autodeploy': (_source == 'git' && _autodeploy) ? 1 : 0,
         'exposure_mode': _exposure == 'none' ? null : _exposure,
         'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
         'domain': _exposure == 'path' ? _domain.text.trim() : null,
@@ -512,6 +574,16 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                   TextField(controller: _repo, decoration: const InputDecoration(labelText: 'Git repo URL (*_deploy)')),
                   const SizedBox(height: 8),
                   TextField(controller: _branch, decoration: const InputDecoration(labelText: 'Branch')),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: _autodeploy,
+                    onChanged: (v) => setState(() => _autodeploy = v),
+                    title: const Text('Auto-deploy (CI/CD)', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Poll this branch and Pull & Deploy on new commits',
+                        style: TextStyle(fontSize: 11)),
+                    secondary: const Icon(Icons.sync),
+                  ),
                 ],
                 if (_source == 'local') ...[
                   const SizedBox(height: 8),

@@ -217,6 +217,23 @@ class Api {
     }
   }
 
+  /// Live PM2 metrics for ALL wm-* apps in one call: list of
+  /// {name: 'wm-<site>', status, cpu, memory, restarts, uptime, ...}.
+  Future<Map<String, Map<String, dynamic>>> pm2Overview() async {
+    try {
+      final r = await http.get(_u('/api/sites/pm2/overview'), headers: _headers);
+      if (r.statusCode != 200) return {};
+      final list = (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+      // key by site name (strip the wm- service prefix)
+      return {
+        for (final m in list)
+          (m['name']?.toString() ?? '').replaceFirst('wm-', ''): m,
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
   /// Fire a button action that streams its logs over WebSocket.
   Future<void> action(int id, String path, [Map<String, dynamic>? body]) async {
     await http.post(_u('/api/sites/$id/$path'),
