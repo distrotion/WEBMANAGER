@@ -9,6 +9,7 @@ import 'folder_picker.dart';
 import 'users.dart';
 import 'shell_console.dart';
 import 'audit.dart';
+import 'download.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
 // so a backgrounded panel costs the server (almost) nothing.
@@ -618,6 +619,27 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
     }
   }
 
+  // Pick a .env file from this computer and MERGE it into the Env vars field:
+  // keys already typed stay (imported values win on duplicates); the file itself
+  // is read in the browser only — never uploaded, moved, or deleted.
+  Future<void> _importEnvFile() async {
+    final text = await pickTextFile();
+    if (text == null) return;
+    final merged = <String, String>{};
+    void addLines(String src) {
+      for (final line in src.split('\n')) {
+        final t = line.trim();
+        if (t.isEmpty || t.startsWith('#') || !t.contains('=')) continue;
+        final i = t.indexOf('=');
+        merged[t.substring(0, i).trim()] = t.substring(i + 1).trim();
+      }
+    }
+
+    addLines(_env.text);
+    addLines(text); // imported file wins on duplicate keys
+    setState(() => _env.text = merged.entries.map((e) => '${e.key}=${e.value}').join('\n'));
+  }
+
   Future<void> _save() async {
     setState(() {
       _busy = true;
@@ -759,6 +781,15 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Env vars (one per line: KEY=VALUE)',
                     hintText: 'DB_HOST=1.2.3.4\nNODE_ENV=production',
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _importEnvFile,
+                    icon: const Icon(Icons.upload_file, size: 16),
+                    label: const Text('Import .env file (merge — nothing deleted)',
+                        style: TextStyle(fontSize: 12)),
                   ),
                 ),
               ],
