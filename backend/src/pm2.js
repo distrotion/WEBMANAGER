@@ -24,17 +24,35 @@ function serviceName(site) {
 }
 
 // ---- process list / metrics ----
-async function jlist() {
-  const r = await pm2(['jlist'], { channel: 'silent' });
-  const out = r.out || '';
-  const s = out.indexOf('[');
-  const e = out.lastIndexOf(']');
-  if (s < 0 || e < 0) return [];
-  try {
-    return JSON.parse(out.slice(s, e + 1));
-  } catch {
-    return [];
-  }
+// jlist spawns a node process, so cache it briefly (single-flight): the sites
+// list, PM2 list, and detail pages all poll every 3s — with this, any number of
+// concurrent pollers/tabs cost at most one spawn per 2s.
+let _jcache = { t: 0, p: null };
+function jlist() {
+  const now = Date.now();
+  if (_jcache.p && now - _jcache.t < 2000) return _jcache.p;
+  _jcache = {
+    t: now,
+    p: (async () => {
+      const r = await pm2(['jlist'], { channel: 'silent' });
+      const out = r.out || '';
+      const s = out.indexOf('[');
+      const e = out.lastIndexOf(']');
+      if (s < 0 || e < 0) return [];
+      try {
+        return JSON.parse(out.slice(s, e + 1));
+      } catch {
+        return [];
+      }
+    })(),
+  };
+  return _jcache.p;
+}
+
+// Lifecycle actions change the process list — drop the cache so the next
+// poll reflects the new state immediately.
+function invalidateJlist() {
+  _jcache = { t: 0, p: null };
 }
 
 function metricsOf(list, svc) {
@@ -118,6 +136,7 @@ async function start(site, channel) {
     : await pm2(startArgs(site), { channel, env });
   await pm2(['save'], { channel: 'silent', env });
   db.prepare('UPDATE sites SET service_name=? WHERE id=?').run(serviceName(site), site.id);
+  invalidateJlist();
   await refreshStatus(site);
   return r;
 }
@@ -134,18 +153,21 @@ async function restart(site, channel) {
     return start(site, channel);
   }
   await pm2(['save'], { channel: 'silent', env });
+  invalidateJlist();
   await refreshStatus(site);
   return r;
 }
 
 async function stop(site, channel) {
   const r = await pm2(['stop', serviceName(site)], { channel });
+  invalidateJlist();
   await refreshStatus(site);
   return r;
 }
 
 async function remove(site, channel) {
   await pm2(['delete', serviceName(site)], { channel });
+  invalidateJlist();
   return pm2(['save'], { channel: 'silent' });
 }
 

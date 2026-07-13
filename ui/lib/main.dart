@@ -164,6 +164,8 @@ class _SitesPageState extends State<SitesPage> {
   }
 
   Future<void> _pollOverview() async {
+    // skip while another page (detail / PM2 list) is on top of us
+    if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
     final o = await Api.instance.pm2Overview();
     if (mounted) setState(() => _overview = o);
   }
