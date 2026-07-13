@@ -414,7 +414,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _path.text = s['path'] ?? '';
       _runtime = s['runtime'] ?? 'static';
       _source = s['source_type'] ?? 'git';
-      _exposure = s['exposure_mode'] ?? 'subdomain';
+      _exposure = s['exposure_mode'] ?? 'none';
     } else {
       // creating → prefill from remembered config
       _branch.text = _cfg['branch'] ?? 'main';
@@ -441,7 +441,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
         if (_runtime == 'node') 'entry_file': _entry.text.trim().isEmpty ? null : _entry.text.trim(),
         if (_runtime == 'node') 'env_json': _linesToEnvJson(_env.text),
         'direct_port': _port.text.trim().isNotEmpty ? int.tryParse(_port.text.trim()) : null,
-        'exposure_mode': _exposure,
+        'exposure_mode': _exposure == 'none' ? null : _exposure,
         'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
         'domain': _exposure == 'path' ? _domain.text.trim() : null,
         'path': _exposure == 'path' ? _path.text.trim() : null,
@@ -569,6 +569,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                 value: _exposure,
                 decoration: const InputDecoration(labelText: 'Front exposure (layer 2)'),
                 items: const [
+                  DropdownMenuItem(value: 'none', child: Text('none (direct port only)')),
                   DropdownMenuItem(value: 'subdomain', child: Text('subdomain')),
                   DropdownMenuItem(value: 'path', child: Text('path')),
                 ],
