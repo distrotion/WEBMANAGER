@@ -10,6 +10,15 @@ import 'users.dart';
 import 'shell_console.dart';
 import 'audit.dart';
 
+// True when the browser tab is hidden/minimised — live pollers skip work then,
+// so a backgrounded panel costs the server (almost) nothing.
+bool pageHidden() {
+  final st = WidgetsBinding.instance.lifecycleState;
+  return st == AppLifecycleState.hidden ||
+      st == AppLifecycleState.paused ||
+      st == AppLifecycleState.detached;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Restore remembered login — never let a storage hiccup blank the whole app.
@@ -164,8 +173,8 @@ class _SitesPageState extends State<SitesPage> {
   }
 
   Future<void> _pollOverview() async {
-    // skip while another page (detail / PM2 list) is on top of us
-    if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    // skip while the tab is hidden or another page (detail / PM2 list) covers us
+    if (!mounted || pageHidden() || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
     final o = await Api.instance.pm2Overview();
     if (mounted) setState(() => _overview = o);
   }
@@ -444,6 +453,7 @@ class _Pm2ListPageState extends State<Pm2ListPage> {
   }
 
   Future<void> _poll() async {
+    if (!mounted || pageHidden()) return;
     final o = await Api.instance.pm2Overview();
     if (mounted) {
       setState(() {
@@ -964,6 +974,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
   }
 
   Future<void> _loadMetrics() async {
+    if (!mounted || pageHidden()) return;
     final m = await Api.instance.processMetrics(s['id']);
     if (mounted) setState(() => _metrics = m);
   }

@@ -11,6 +11,52 @@ const { emitLog } = require('./logbus');
 // is no pm2.cmd spawn (avoids EINVAL on Windows/Node 20+). PM2_HOME lives in ROOT.
 const PM2_BIN = require.resolve('pm2/bin/pm2');
 
+// Programmatic PM2 client — talks to the daemon over its RPC socket, no process
+// spawn per query (~2ms vs ~150ms for a CLI jlist). The pm2 module captures
+// PM2_HOME once at require time, so point it at our home just for the require,
+// then restore the ambient value (children spawned later inherit the original
+// env — the server's own PM2 stays untouched).
+let pm2api = null;
+(() => {
+  const prev = process.env.PM2_HOME;
+  process.env.PM2_HOME = config.pm2.home;
+  try {
+    pm2api = require('pm2');
+  } catch {
+    pm2api = null; // CLI fallback still works
+  }
+  if (prev === undefined) delete process.env.PM2_HOME;
+  else process.env.PM2_HOME = prev;
+})();
+
+let apiConnected = false;
+function apiList() {
+  return new Promise((resolve, reject) => {
+    if (!pm2api) return reject(new Error('pm2 api unavailable'));
+    fs.mkdirSync(config.pm2.home, { recursive: true });
+    const doList = () =>
+      pm2api.list((err, list) => {
+        if (err) {
+          // daemon may have died — drop the connection so next call reconnects
+          apiConnected = false;
+          try {
+            pm2api.disconnect();
+          } catch {
+            /* ignore */
+          }
+          return reject(err);
+        }
+        resolve(list);
+      });
+    if (apiConnected) return doList();
+    pm2api.connect((err) => {
+      if (err) return reject(err);
+      apiConnected = true;
+      doList();
+    });
+  });
+}
+
 function pm2env(extra) {
   return { PM2_HOME: config.pm2.home, ...(extra || {}) };
 }
@@ -34,6 +80,12 @@ function jlist() {
   _jcache = {
     t: now,
     p: (async () => {
+      // fast path: daemon RPC (no spawn); fall back to CLI jlist
+      try {
+        return await apiList();
+      } catch {
+        /* fall through to CLI */
+      }
       const r = await pm2(['jlist'], { channel: 'silent' });
       const out = r.out || '';
       const s = out.indexOf('[');
