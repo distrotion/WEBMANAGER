@@ -61,10 +61,12 @@ module.exports = {
     email: process.env.ACME_EMAIL || 'admin@example.com',
   },
   // PM2 manages node/Node-RED apps. We invoke it as `node <pm2-bin>` (a local dep),
-  // so no pm2.cmd spawn (avoids EINVAL on Windows/Node 20+). PM2_HOME keeps its
-  // state/dump inside ROOT so it survives reboots and is per-install.
+  // so no pm2.cmd spawn (avoids EINVAL on Windows/Node 20+). PM2_HOME is ALWAYS our
+  // own dir under ROOT (never the ambient/global PM2_HOME) — so if the server already
+  // runs its own PM2, that daemon and its apps stay completely untouched. We only see
+  // and manage our wm-* processes. Override intentionally with WM_PM2_HOME if needed.
   pm2: {
-    home: process.env.PM2_HOME || path.join(ROOT, 'pm2'),
+    home: process.env.WM_PM2_HOME || path.join(ROOT, 'pm2'),
   },
   nodeExe: process.env.NODE_EXE || process.execPath,
 };
