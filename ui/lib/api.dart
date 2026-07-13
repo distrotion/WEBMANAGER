@@ -234,6 +234,20 @@ class Api {
     }
   }
 
+  /// Read a Node-RED site's user overrides (settings.user.js).
+  Future<String> noderedSettings(int id) async {
+    final r = await http.get(_u('/api/sites/$id/nodered-settings'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'load failed');
+    return jsonDecode(r.body)['content']?.toString() ?? '';
+  }
+
+  /// Save a Node-RED site's user overrides (validated server-side).
+  Future<void> saveNoderedSettings(int id, String content) async {
+    final r = await http.put(_u('/api/sites/$id/nodered-settings'),
+        headers: _headers, body: jsonEncode({'content': content}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'save failed');
+  }
+
   /// Fire a button action that streams its logs over WebSocket.
   Future<void> action(int id, String path, [Map<String, dynamic>? body]) async {
     await http.post(_u('/api/sites/$id/$path'),

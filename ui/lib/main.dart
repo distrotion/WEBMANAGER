@@ -677,6 +677,142 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   }
 }
 
+// ---------------- Node-RED settings editor ----------------
+// Edits settings.user.js (user overrides that survive restarts). Common toggles
+// (CORS) are one click; advanced users edit the JS directly.
+class NoderedSettingsDialog extends StatefulWidget {
+  final Map<String, dynamic> site;
+  const NoderedSettingsDialog({super.key, required this.site});
+  @override
+  State<NoderedSettingsDialog> createState() => _NoderedSettingsDialogState();
+}
+
+class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
+  final _ctrl = TextEditingController();
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+
+  static const _corsLine = "  httpNodeCors: { origin: '*', methods: 'GET,PUT,POST,DELETE,OPTIONS' },";
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final c = await Api.instance.noderedSettings(widget.site['id']);
+      _ctrl.text = c;
+    } catch (e) {
+      _error = '$e';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  bool get _corsEnabled =>
+      RegExp(r'^\s*httpNodeCors\s*:', multiLine: true).hasMatch(_ctrl.text);
+
+  // Toggle the CORS line: uncomment/insert it, or comment it out.
+  void _toggleCors(bool on) {
+    var t = _ctrl.text;
+    if (on) {
+      // uncomment an existing commented line, else insert after module.exports = {
+      final commented = RegExp(r'^\s*//\s*(httpNodeCors\s*:.*)$', multiLine: true);
+      if (commented.hasMatch(t)) {
+        t = t.replaceFirstMapped(commented, (m) => '  ${m.group(1)}');
+      } else if (!_corsEnabled) {
+        t = t.replaceFirst(RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$_corsLine');
+      }
+    } else {
+      t = t.replaceAllMapped(
+        RegExp(r'^(\s*)(httpNodeCors\s*:.*)$', multiLine: true),
+        (m) => '${m.group(1)}// ${m.group(2)}',
+      );
+    }
+    setState(() => _ctrl.text = t);
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await Api.instance.saveNoderedSettings(widget.site['id'], _ctrl.text);
+      if (!mounted) return;
+      // ask whether to restart now so the change takes effect
+      final restart = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          content: const Text('Saved. Restart Node-RED now to apply the new settings?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Later')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Restart now')),
+          ],
+        ),
+      );
+      if (mounted) Navigator.of(context).pop(restart == true);
+    } catch (e) {
+      setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Node-RED settings · ${widget.site['name']}'),
+      content: SizedBox(
+        width: 560,
+        child: _loading
+            ? const SizedBox(height: 80, child: Center(child: CircularProgressIndicator()))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: _corsEnabled,
+                    onChanged: _toggleCors,
+                    title: const Text('Enable CORS (httpNodeCors)', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Allow API/HTTP-In nodes to be called from any origin',
+                        style: TextStyle(fontSize: 11)),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('settings.user.js  (survives restarts / redeploys)',
+                      style: TextStyle(fontSize: 12, color: Colors.white54)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: _ctrl,
+                    minLines: 8,
+                    maxLines: 16,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    decoration: const InputDecoration(border: OutlineInputBorder()),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _busy || _loading ? null : _save,
+          child: _busy
+              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
 // ---------------- Site detail ----------------
 class SiteDetailPage extends StatefulWidget {
   final Map<String, dynamic> site;
@@ -721,6 +857,15 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
+  }
+
+  Future<void> _editNoderedSettings() async {
+    final restart = await showDialog<bool>(
+      context: context,
+      builder: (_) => NoderedSettingsDialog(site: s),
+    );
+    // If the user chose to apply now, restart Node-RED so the new settings load.
+    if (restart == true) await _act('restart');
   }
 
   // Live URL of the site via the direct port (layer 1), using the host the panel
@@ -802,6 +947,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
               if (isProcess) _btn('Restart', Icons.restart_alt, () => _act('restart')),
               if (isProcess) _btn('Stop', Icons.stop, () => _act('stop')),
               if (isProcess) _btn('View log', Icons.article, () => _act('logs')),
+              if (runtime == 'nodered') _btn('Settings (CORS…)', Icons.tune, _editNoderedSettings),
             ]),
             // nginx/SSL only matter for static sites or anything with a front exposure.
             // A plain node/Node-RED app (no front) is PM2-only — no web section.

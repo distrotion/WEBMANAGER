@@ -1,7 +1,9 @@
 'use strict';
+const fs = require('fs');
 const express = require('express');
 const db = require('../db');
 const pm2 = require('../pm2');
+const services = require('../services');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -56,6 +58,33 @@ router.post('/:id/logs', requireProcess, (req, res) => {
   const channel = `site-${req.site.id}`;
   res.json({ started: true, channel });
   pm2.tailLog(req.site, channel, 300);
+});
+
+// ---- Node-RED user settings (settings.user.js — survives restarts) ----
+function requireNodered(req, res, next) {
+  if (req.site.runtime !== 'nodered') return res.status(400).json({ error: 'not a Node-RED site' });
+  next();
+}
+
+router.get('/:id/nodered-settings', requireProcess, requireNodered, (req, res) => {
+  services.provisionNodeRed(req.site); // ensure the file exists (older sites)
+  const p = services.noderedUserSettingsPath(req.site);
+  res.json({ content: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '' });
+});
+
+router.put('/:id/nodered-settings', requireProcess, requireNodered, (req, res) => {
+  const content = String((req.body && req.body.content) || '');
+  // light sanity check: must be evaluable and export an object
+  try {
+    const m = { exports: {} };
+    new Function('module', 'exports', 'require', content)(m, m.exports, require);
+    if (typeof m.exports !== 'object' || m.exports === null) throw new Error('must export an object');
+  } catch (e) {
+    return res.status(400).json({ error: `invalid settings.js: ${e.message}` });
+  }
+  fs.writeFileSync(services.noderedUserSettingsPath(req.site), content, 'utf8');
+  audit(req.user, 'edit-nodered-settings', req.site.name);
+  res.json({ ok: true });
 });
 
 module.exports = router;
