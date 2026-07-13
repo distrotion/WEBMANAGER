@@ -205,6 +205,13 @@ class _SitesPageState extends State<SitesPage> {
         ]),
         actions: [
           IconButton(
+            tooltip: 'PM2 list',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const Pm2ListPage()),
+            ),
+            icon: const Icon(Icons.table_rows),
+          ),
+          IconButton(
             tooltip: 'Install requirements',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const RequirementsPage()),
@@ -405,6 +412,116 @@ class _SitesPageState extends State<SitesPage> {
       default:
         return Icons.web;
     }
+  }
+}
+
+// ---------------- PM2 list (pm2 ls) ----------------
+// Live table of every wm-* PM2 process, like `pm2 list` — polls every 3s.
+class Pm2ListPage extends StatefulWidget {
+  const Pm2ListPage({super.key});
+  @override
+  State<Pm2ListPage> createState() => _Pm2ListPageState();
+}
+
+class _Pm2ListPageState extends State<Pm2ListPage> {
+  Map<String, Map<String, dynamic>> _apps = {};
+  bool _loading = true;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _poll();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _poll() async {
+    final o = await Api.instance.pm2Overview();
+    if (mounted) {
+      setState(() {
+        _apps = o;
+        _loading = false;
+      });
+    }
+  }
+
+  String _uptime(dynamic since, String status) {
+    if (since is! num || status != 'online') return '-';
+    final secs = (DateTime.now().millisecondsSinceEpoch - since) ~/ 1000;
+    if (secs < 0) return '-';
+    if (secs < 60) return '${secs}s';
+    if (secs < 3600) return '${secs ~/ 60}m';
+    if (secs < 86400) return '${secs ~/ 3600}h ${(secs % 3600) ~/ 60}m';
+    return '${secs ~/ 86400}d ${(secs % 86400) ~/ 3600}h';
+  }
+
+  Color _stColor(String s) => s == 'online'
+      ? Colors.greenAccent
+      : (s == 'errored' ? Colors.redAccent : Colors.grey);
+
+  @override
+  Widget build(BuildContext context) {
+    final names = _apps.keys.toList()..sort();
+    return Scaffold(
+      appBar: AppBar(title: const Text('PM2 list'), actions: [
+        IconButton(onPressed: _poll, icon: const Icon(Icons.refresh)),
+      ]),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : names.isEmpty
+              ? const Center(
+                  child: Text('No PM2 processes — deploy a node / Node-RED app first.',
+                      style: TextStyle(color: Colors.white54)))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingTextStyle:
+                          const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      dataTextStyle:
+                          const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      columns: const [
+                        DataColumn(label: Text('name')),
+                        DataColumn(label: Text('status')),
+                        DataColumn(label: Text('pid')),
+                        DataColumn(label: Text('cpu')),
+                        DataColumn(label: Text('mem')),
+                        DataColumn(label: Text('↻ restarts')),
+                        DataColumn(label: Text('uptime')),
+                      ],
+                      rows: [
+                        for (final n in names)
+                          DataRow(cells: [
+                            DataCell(Text(_apps[n]!['name']?.toString() ?? 'wm-$n')),
+                            DataCell(Text(
+                              _apps[n]!['status']?.toString() ?? '?',
+                              style: TextStyle(
+                                  color: _stColor(_apps[n]!['status']?.toString() ?? ''),
+                                  fontWeight: FontWeight.bold),
+                            )),
+                            DataCell(Text('${_apps[n]!['pid'] ?? '-'}')),
+                            DataCell(Text(_apps[n]!['cpu'] is num
+                                ? '${(_apps[n]!['cpu'] as num).toStringAsFixed(1)}%'
+                                : '-')),
+                            DataCell(Text(_apps[n]!['memory'] is num
+                                ? '${((_apps[n]!['memory'] as num) / 1048576).toStringAsFixed(0)} MB'
+                                : '-')),
+                            DataCell(Text('${_apps[n]!['restarts'] ?? 0}')),
+                            DataCell(Text(_uptime(
+                                _apps[n]!['uptime'], _apps[n]!['status']?.toString() ?? ''))),
+                          ]),
+                      ],
+                    ),
+                  ),
+                ),
+    );
   }
 }
 
