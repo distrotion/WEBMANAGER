@@ -1060,7 +1060,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
             _group(runLabel, [
               if (isStatic || runtime == 'node')
                 _btn('Pull & Deploy', Icons.cloud_download, () => _act('deploy')),
-              if (runtime == 'nodered') _btn('Start', Icons.play_arrow, () => _act('start')),
+              if (isProcess) _btn('Start', Icons.play_arrow, () => _act('start')),
               if (isProcess) _btn('Restart', Icons.restart_alt, () => _act('restart')),
               if (isProcess) _btn('Stop', Icons.stop, () => _act('stop')),
               if (isProcess) _btn('View log', Icons.article, () => _act('logs')),

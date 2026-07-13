@@ -97401,7 +97401,7 @@ k=h.v2("Open",k)
 j=A.b([],l)
 i=!r
 if(!i||s.j(c,e))j.push(h.ix("Pull & Deploy",B.rw,new A.azu(h)))
-if(s.j(c,f))j.push(h.ix("Start",B.lj,new A.azv(h)))
+if(q)j.push(h.ix("Start",B.lj,new A.azv(h)))
 if(q)j.push(h.ix("Restart",B.ll,new A.azw(h)))
 if(q)j.push(h.ix("Stop",B.lm,new A.azx(h)))
 if(q)j.push(h.ix("View log",B.MJ,new A.azy(h)))

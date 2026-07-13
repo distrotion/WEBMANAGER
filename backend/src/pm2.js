@@ -109,7 +109,13 @@ function startArgs(site) {
 
 async function start(site, channel) {
   const env = envFor(site);
-  const r = await pm2(startArgs(site), { channel, env });
+  const svc = serviceName(site);
+  // If PM2 already knows this app (e.g. it was stopped), resume it by name —
+  // `pm2 start <script> --name` on an existing app errors "already launched".
+  const known = (await jlist()).some((p) => p.name === svc);
+  const r = known
+    ? await pm2(['start', svc, '--update-env'], { channel, env })
+    : await pm2(startArgs(site), { channel, env });
   await pm2(['save'], { channel: 'silent', env });
   db.prepare('UPDATE sites SET service_name=? WHERE id=?').run(serviceName(site), site.id);
   await refreshStatus(site);
