@@ -178,6 +178,10 @@ function startArgs(site) {
 }
 
 async function start(site, channel) {
+  // First Node-RED start on a fresh machine: install the shared runtime.
+  if (site.runtime === 'nodered' && !(await services.ensureNodeRedRuntime(channel))) {
+    return { code: -1, error: 'node-red install failed' };
+  }
   const env = envFor(site);
   const svc = serviceName(site);
   // If PM2 already knows this app (e.g. it was stopped), resume it by name —

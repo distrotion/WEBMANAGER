@@ -21,6 +21,27 @@ function cleanPath(p, fallback) {
   return '/' + String(p || fallback).replace(/^\/+|\/+$/g, '');
 }
 
+// Shared Node-RED install used by every Node-RED site. Installed on demand the
+// first time a Node-RED site starts (npm i into ROOT/runtimes/node-red), so no
+// manual step is needed on either Mac or Windows.
+function noderedRedJs() {
+  return path.join(config.paths.runtimes, 'node-red', 'node_modules', 'node-red', 'red.js');
+}
+
+async function ensureNodeRedRuntime(channel) {
+  if (fs.existsSync(noderedRedJs())) return true;
+  const dir = path.join(config.paths.runtimes, 'node-red');
+  emitLog(channel, '[node-red] runtime not installed — installing now (npm i node-red, this can take a few minutes)…');
+  fs.mkdirSync(dir, { recursive: true });
+  const r = await run('npm', ['install', 'node-red', '--no-audit', '--no-fund', '--prefix', dir], {
+    channel,
+    shell: true, // npm is npm.cmd on Windows
+  });
+  const ok = r.code === 0 && fs.existsSync(noderedRedJs());
+  emitLog(channel, ok ? '[node-red] runtime installed' : '[node-red] install FAILED — see log above');
+  return ok;
+}
+
 // --- Node-RED provisioning: per-site userDir + settings.js (httpRoot for path mode) ---
 function noderedUserSettingsPath(site) {
   return path.join(config.paths.services, site.name, 'settings.user.js');
@@ -174,4 +195,5 @@ module.exports = {
   tailLog,
   provisionNodeRed,
   noderedUserSettingsPath,
+  ensureNodeRedRuntime,
 };
