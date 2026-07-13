@@ -194,12 +194,13 @@ class _SitesPageState extends State<SitesPage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
       appBar: AppBar(
         title: const Text('WEBMANAGER'),
         bottom: const TabBar(tabs: [
           Tab(icon: Icon(Icons.dns, size: 18), text: 'PM2 apps'),
+          Tab(icon: Icon(Icons.account_tree, size: 18), text: 'Node-RED'),
           Tab(icon: Icon(Icons.web, size: 18), text: 'nginx / web'),
         ]),
         actions: [
@@ -276,10 +277,12 @@ class _SitesPageState extends State<SitesPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final sites = snap.data ?? [];
-          final pm2 = sites.where((s) => s['runtime'] == 'node' || s['runtime'] == 'nodered').toList();
+          final node = sites.where((s) => s['runtime'] == 'node').toList();
+          final nodered = sites.where((s) => s['runtime'] == 'nodered').toList();
           final web = sites.where((s) => s['runtime'] == 'static').toList();
           return TabBarView(children: [
-            _siteList(context, pm2, 'No PM2 apps yet — create a node / Node-RED site.'),
+            _siteList(context, node, 'No PM2 apps yet — create a node backend site.'),
+            _siteList(context, nodered, 'No Node-RED apps yet — create a Node-RED site.'),
             _siteList(context, web, 'No nginx sites yet — create a static site.'),
           ]);
         },
