@@ -175,9 +175,15 @@ class _SitesPageState extends State<SitesPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('WEBMANAGER'),
+        bottom: const TabBar(tabs: [
+          Tab(icon: Icon(Icons.dns, size: 18), text: 'PM2 apps'),
+          Tab(icon: Icon(Icons.web, size: 18), text: 'nginx / web'),
+        ]),
         actions: [
           IconButton(
             tooltip: 'Install requirements',
@@ -252,47 +258,55 @@ class _SitesPageState extends State<SitesPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final sites = snap.data ?? [];
-          if (sites.isEmpty) {
-            return const Center(child: Text('No sites yet — create one.'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: sites.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (_, i) {
-              final s = sites[i];
-              return Card(
-                child: ListTile(
-                  leading: Icon(_runtimeIcon(s['runtime'])),
-                  title: Text(s['name'], style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(_subtitle(s)),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (_openUrl(s) != null)
-                      IconButton(
-                        tooltip: 'Open',
-                        icon: const Icon(Icons.open_in_new, size: 18),
-                        onPressed: () => launchUrl(Uri.parse(_openUrl(s)!), webOnlyWindowName: '_blank'),
-                      ),
-                    if (s['ssl_enabled'] == 1) const Icon(Icons.lock, size: 16, color: Colors.greenAccent),
-                    const SizedBox(width: 8),
-                    Chip(
-                      label: Text(s['status'] ?? 'new', style: const TextStyle(fontSize: 11)),
-                      backgroundColor: _statusColor(s['status']).withValues(alpha: 0.2),
-                      side: BorderSide(color: _statusColor(s['status'])),
-                    ),
-                  ]),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => SiteDetailPage(site: s)),
-                    );
-                    _reload();
-                  },
-                ),
-              );
-            },
-          );
+          final pm2 = sites.where((s) => s['runtime'] == 'node' || s['runtime'] == 'nodered').toList();
+          final web = sites.where((s) => s['runtime'] == 'static').toList();
+          return TabBarView(children: [
+            _siteList(context, pm2, 'No PM2 apps yet — create a node / Node-RED site.'),
+            _siteList(context, web, 'No nginx sites yet — create a static site.'),
+          ]);
         },
       ),
+    ),
+    );
+  }
+
+  Widget _siteList(BuildContext context, List<Map<String, dynamic>> sites, String empty) {
+    if (sites.isEmpty) return Center(child: Text(empty, style: const TextStyle(color: Colors.white54)));
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemCount: sites.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) {
+        final s = sites[i];
+        return Card(
+          child: ListTile(
+            leading: Icon(_runtimeIcon(s['runtime'])),
+            title: Text(s['name'], style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(_subtitle(s)),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (_openUrl(s) != null)
+                IconButton(
+                  tooltip: 'Open',
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  onPressed: () => launchUrl(Uri.parse(_openUrl(s)!), webOnlyWindowName: '_blank'),
+                ),
+              if (s['ssl_enabled'] == 1) const Icon(Icons.lock, size: 16, color: Colors.greenAccent),
+              const SizedBox(width: 8),
+              Chip(
+                label: Text(s['status'] ?? 'new', style: const TextStyle(fontSize: 11)),
+                backgroundColor: _statusColor(s['status']).withValues(alpha: 0.2),
+                side: BorderSide(color: _statusColor(s['status'])),
+              ),
+            ]),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => SiteDetailPage(site: s)),
+              );
+              _reload();
+            },
+          ),
+        );
+      },
     );
   }
 
