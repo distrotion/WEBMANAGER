@@ -241,6 +241,14 @@ class Api {
     return jsonDecode(r.body)['content']?.toString() ?? '';
   }
 
+  /// Bcrypt-hash an editor password for Node-RED adminAuth.
+  Future<String> noderedHash(int id, String password) async {
+    final r = await http.post(_u('/api/sites/$id/nodered-hash'),
+        headers: _headers, body: jsonEncode({'password': password}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'hash failed');
+    return jsonDecode(r.body)['hash'] as String;
+  }
+
   /// Save a Node-RED site's user overrides (validated server-side).
   Future<void> saveNoderedSettings(int id, String content) async {
     final r = await http.put(_u('/api/sites/$id/nodered-settings'),

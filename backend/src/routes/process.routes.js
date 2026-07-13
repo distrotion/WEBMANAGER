@@ -72,6 +72,13 @@ router.get('/:id/nodered-settings', requireProcess, requireNodered, (req, res) =
   res.json({ content: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '' });
 });
 
+// bcrypt-hash an editor password for adminAuth (same format as node-red-admin hash-pw).
+router.post('/:id/nodered-hash', requireProcess, requireNodered, (req, res) => {
+  const pw = String((req.body && req.body.password) || '');
+  if (pw.length < 4) return res.status(400).json({ error: 'password too short (min 4)' });
+  res.json({ hash: require('bcryptjs').hashSync(pw, 8) });
+});
+
 router.put('/:id/nodered-settings', requireProcess, requireNodered, (req, res) => {
   const content = String((req.body && req.body.content) || '');
   // light sanity check: must be evaluable and export an object

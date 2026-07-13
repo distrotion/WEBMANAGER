@@ -818,6 +818,9 @@ class NoderedSettingsDialog extends StatefulWidget {
 
 class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
   final _ctrl = TextEditingController();
+  final _authUser = TextEditingController(text: 'admin');
+  final _authPass = TextEditingController();
+  bool _authOn = false;
   bool _loading = true;
   bool _busy = false;
   String? _error;
@@ -834,6 +837,10 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
     try {
       final c = await Api.instance.noderedSettings(widget.site['id']);
       _ctrl.text = c;
+      _authOn = _authEnabled;
+      final m = RegExp(r"^\s*adminAuth\s*:.*username:\s*'([^']*)'", multiLine: true)
+          .firstMatch(c);
+      if (m != null) _authUser.text = m.group(1)!;
     } catch (e) {
       _error = '$e';
     }
@@ -842,6 +849,9 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
 
   bool get _corsEnabled =>
       RegExp(r'^\s*httpNodeCors\s*:', multiLine: true).hasMatch(_ctrl.text);
+
+  bool get _authEnabled =>
+      RegExp(r'^\s*adminAuth\s*:', multiLine: true).hasMatch(_ctrl.text);
 
   // Toggle the CORS line: uncomment/insert it, or comment it out.
   void _toggleCors(bool on) {
@@ -863,12 +873,47 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
     setState(() => _ctrl.text = t);
   }
 
+  // Apply the editor-login switch to the settings text: insert/replace a
+  // one-line adminAuth (password bcrypt-hashed server-side), or comment it out.
+  Future<void> _applyAuth() async {
+    if (_authOn) {
+      final user = _authUser.text.trim();
+      if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(user)) {
+        throw Exception('username: letters/numbers/._- only');
+      }
+      if (_authPass.text.isEmpty) {
+        if (_authEnabled) return; // keep the existing credentials
+        throw Exception('enter a password to enable editor login');
+      }
+      final hash = await Api.instance.noderedHash(widget.site['id'], _authPass.text);
+      final line =
+          "  adminAuth: { type: 'credentials', users: [{ username: '$user', password: '$hash', permissions: '*' }] },";
+      var t = _ctrl.text;
+      final active = RegExp(r'^\s*adminAuth\s*:.*$', multiLine: true);
+      final commented = RegExp(r'^\s*//\s*adminAuth\s*:.*$', multiLine: true);
+      if (active.hasMatch(t)) {
+        t = t.replaceFirst(active, line);
+      } else if (commented.hasMatch(t)) {
+        t = t.replaceFirst(commented, line);
+      } else {
+        t = t.replaceFirst(RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$line');
+      }
+      _ctrl.text = t;
+    } else if (_authEnabled) {
+      _ctrl.text = _ctrl.text.replaceAllMapped(
+        RegExp(r'^(\s*)(adminAuth\s*:.*)$', multiLine: true),
+        (m) => '${m.group(1)}// ${m.group(2)}',
+      );
+    }
+  }
+
   Future<void> _save() async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      await _applyAuth();
       await Api.instance.saveNoderedSettings(widget.site['id'], _ctrl.text);
       if (!mounted) return;
       // ask whether to restart now so the change takes effect
@@ -911,6 +956,35 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
                     subtitle: const Text('Allow API/HTTP-In nodes to be called from any origin',
                         style: TextStyle(fontSize: 11)),
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: _authOn,
+                    onChanged: (v) => setState(() => _authOn = v),
+                    title: const Text('Editor login (adminAuth)', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Require username/password to open the flow editor',
+                        style: TextStyle(fontSize: 11)),
+                  ),
+                  if (_authOn)
+                    Row(children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _authUser,
+                          decoration: const InputDecoration(labelText: 'Username', isDense: true),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _authPass,
+                          obscureText: true,
+                          decoration: InputDecoration(
+                            labelText: _authEnabled ? 'New password (blank = keep)' : 'Password',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                    ]),
                   const SizedBox(height: 8),
                   const Text('settings.user.js  (survives restarts / redeploys)',
                       style: TextStyle(fontSize: 12, color: Colors.white54)),
