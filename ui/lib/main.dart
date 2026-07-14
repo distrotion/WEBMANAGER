@@ -160,6 +160,7 @@ class _SitesPageState extends State<SitesPage> {
   Map<String, Map<String, dynamic>> _overview = {};
   Timer? _monitTimer;
   String _version = '';
+  List<Map<String, dynamic>> _fleetServers = []; // hub mode: switchable servers
 
   @override
   void initState() {
@@ -167,9 +168,32 @@ class _SitesPageState extends State<SitesPage> {
     _reload();
     _pollOverview();
     _monitTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollOverview());
+    _loadVersion();
+    _loadFleet();
+  }
+
+  void _loadVersion() {
     Api.instance.serverVersion().then((v) {
       if (mounted) setState(() => _version = v);
     });
+  }
+
+  Future<void> _loadFleet() async {
+    if (!Api.instance.isAdmin) return;
+    try {
+      final info = await Api.instance.fleetInfo();
+      if (info['role'] == 'hub') {
+        final r = await Api.instance.fleetRemotes();
+        if (mounted) setState(() => _fleetServers = r);
+      }
+    } catch (_) {}
+  }
+
+  void _switchServer(int? id, String name) {
+    Api.instance.setRemote(id, name);
+    _overview = {};
+    _reload();
+    _loadVersion();
   }
 
   @override
@@ -216,6 +240,18 @@ class _SitesPageState extends State<SitesPage> {
       appBar: AppBar(
         title: Row(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
           const Text('WEBMANAGER'),
+          if (Api.instance.onRemote)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 1),
+              child: Chip(
+                visualDensity: VisualDensity.compact,
+                avatar: const Icon(Icons.hub, size: 14, color: Colors.amberAccent),
+                label: Text(Api.instance.remoteName,
+                    style: const TextStyle(fontSize: 12, color: Colors.amberAccent)),
+                backgroundColor: Colors.amber.withValues(alpha: 0.12),
+                side: const BorderSide(color: Colors.amberAccent),
+              ),
+            ),
           if (_version.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 3),
@@ -229,6 +265,42 @@ class _SitesPageState extends State<SitesPage> {
           Tab(icon: Icon(Icons.web, size: 18), text: 'nginx / web'),
         ]),
         actions: [
+          if (_fleetServers.isNotEmpty)
+            PopupMenuButton<int?>(
+              tooltip: 'สลับ server (fleet)',
+              icon: Icon(Icons.dns,
+                  color: Api.instance.onRemote ? Colors.amberAccent : null),
+              onSelected: (id) {
+                if (id == null) {
+                  _switchServer(null, '');
+                } else {
+                  final s = _fleetServers.firstWhere((e) => e['id'] == id);
+                  _switchServer(id, s['name']);
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: null,
+                  child: ListTile(
+                    leading: Icon(Icons.computer,
+                        color: !Api.instance.onRemote ? Colors.greenAccent : null),
+                    title: const Text('เครื่องนี้ (local)'),
+                    dense: true,
+                  ),
+                ),
+                for (final s in _fleetServers)
+                  PopupMenuItem(
+                    value: s['id'] as int,
+                    child: ListTile(
+                      leading: Icon(Icons.hub,
+                          color: Api.instance.remoteId == s['id'] ? Colors.amberAccent : null),
+                      title: Text('${s['name']}'),
+                      subtitle: Text('${s['url']}', style: const TextStyle(fontSize: 10)),
+                      dense: true,
+                    ),
+                  ),
+              ],
+            ),
           IconButton(
             tooltip: 'PM2 list',
             onPressed: () => Navigator.of(context).push(

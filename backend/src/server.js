@@ -87,6 +87,8 @@ server.on('upgrade', (req, socket, head) => {
     logWss.handleUpgrade(req, socket, head, (ws) => logWss.emit('connection', ws, req));
   } else if (pathname === '/pty') {
     ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
+  } else if (require('./fleetproxy').handleUpgrade(req, socket, head)) {
+    // fleet ws/pty proxy handled it
   } else {
     socket.destroy();
   }

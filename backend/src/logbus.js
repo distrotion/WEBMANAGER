@@ -1,7 +1,7 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { EventEmitter } = require('events');
-const { verifyToken } = require('./auth');
+const { verifyAnyToken } = require('./auth');
 const db = require('./db');
 
 // Central event bus: every spawned command line is emitted here, persisted to
@@ -29,7 +29,7 @@ function makeWss() {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     const channel = url.searchParams.get('channel') || 'system';
-    if (!verifyToken(token)) {
+    if (!verifyAnyToken(token)) {
       ws.close(4001, 'unauthorized');
       return;
     }

@@ -4,7 +4,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const config = require('./config');
-const { verifyToken } = require('./auth');
+const { verifyAnyToken } = require('./auth');
 const { audit } = require('./audit');
 
 // node-pty ships prebuilt spawn-helpers that sometimes lose their +x bit after
@@ -37,7 +37,7 @@ function makeWss() {
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
-    const payload = verifyToken(url.searchParams.get('token'));
+    const payload = verifyAnyToken(url.searchParams.get('token'));
     if (!payload) return ws.close(4001, 'unauthorized');
     if (payload.role !== 'admin') return ws.close(4003, 'admin only');
 

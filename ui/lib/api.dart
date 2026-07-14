@@ -69,7 +69,26 @@ class Api {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
-  Uri _u(String p) => Uri.parse('$_base$p');
+  /// Fleet: when a remote server is selected (hub mode), every /api/* call is
+  /// routed through this hub's transparent proxy — the whole UI then operates
+  /// on that server. Auth + fleet management always stay local.
+  int? remoteId;
+  String remoteName = '';
+  bool get onRemote => remoteId != null;
+  void setRemote(int? id, String name) {
+    remoteId = id;
+    remoteName = id == null ? '' : name;
+  }
+
+  Uri _u(String p) {
+    if (remoteId != null &&
+        p.startsWith('/api/') &&
+        !p.startsWith('/api/auth') &&
+        !p.startsWith('/api/fleet')) {
+      return Uri.parse('$_base/api/fleet/remotes/$remoteId/proxy$p');
+    }
+    return Uri.parse('$_base$p');
+  }
 
   Future<bool> login(String username, String password) async {
     final r = await http.post(_u('/api/auth/login'),
@@ -377,22 +396,25 @@ class Api {
     return (jsonDecode(r.body)['deleted'] as num).toInt();
   }
 
-  /// Open the live-log socket for a channel (e.g. site-3).
+  /// Open the live-log socket for a channel (e.g. site-3). On a remote server
+  /// this goes through the hub's ws proxy.
   WebSocketChannel logSocket(String channel) {
     final b = _base.replaceFirst('http', 'ws');
-    return WebSocketChannel.connect(Uri.parse('$b/ws?channel=$channel&token=$_token'));
+    final path = remoteId != null ? '/fleet/$remoteId/ws' : '/ws';
+    return WebSocketChannel.connect(Uri.parse('$b$path?channel=$channel&token=$_token'));
   }
 
   /// Open an interactive shell (admin only) at /pty. Pass [site] to start in that
   /// site's folder (server resolves the path), or [cwd] for an explicit path.
   WebSocketChannel ptySocket({int cols = 80, int rows = 24, String? cwd, String? site}) {
     final b = _base.replaceFirst('http', 'ws');
+    final path = remoteId != null ? '/fleet/$remoteId/pty' : '/pty';
     final q = site != null
         ? '&site=${Uri.encodeQueryComponent(site)}'
         : cwd != null
             ? '&cwd=${Uri.encodeQueryComponent(cwd)}'
             : '';
-    return WebSocketChannel.connect(Uri.parse('$b/pty?token=$_token&cols=$cols&rows=$rows$q'));
+    return WebSocketChannel.connect(Uri.parse('$b$path?token=$_token&cols=$cols&rows=$rows$q'));
   }
 
   void debugPrintBase() {

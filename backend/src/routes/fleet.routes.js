@@ -64,6 +64,33 @@ router.post('/remotes', adminOnly, (req, res) => {
   }
 });
 
+// ---- transparent REST proxy: /api/fleet/remotes/:id/proxy/<any remote path> ----
+// The UI switches its API base to this prefix when a remote server is selected,
+// so every existing page (sites, deploy, metrics, logs history, …) just works
+// against the remote. Admin only — the remote token carries admin power there.
+router.all(/^\/remotes\/(\d+)\/proxy(\/.*)$/, adminOnly, async (req, res) => {
+  const remote = db.prepare('SELECT * FROM remotes WHERE id=?').get(req.params[0]);
+  if (!remote) return res.status(404).json({ error: 'unknown remote' });
+  // keep the remote path + query string exactly as sent
+  const suffix = req.originalUrl.replace(/^\/api\/fleet\/remotes\/\d+\/proxy/, '');
+  try {
+    const r = await fetch(remote.url + suffix, {
+      method: req.method,
+      headers: {
+        'Content-Type': req.headers['content-type'] || 'application/json',
+        Authorization: `Bearer ${remote.token}`,
+      },
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(30000),
+    });
+    res.status(r.status);
+    res.set('Content-Type', r.headers.get('content-type') || 'application/json');
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (e) {
+    res.status(502).json({ error: `remote unreachable: ${e.message}` });
+  }
+});
+
 router.delete('/remotes/:id', adminOnly, (req, res) => {
   const r = db.prepare('SELECT name FROM remotes WHERE id=?').get(req.params.id);
   db.prepare('DELETE FROM remotes WHERE id=?').run(req.params.id);
