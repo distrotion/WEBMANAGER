@@ -105,6 +105,18 @@ if (-not (Test-Path "$Root\nginx\nginx.exe")) {
 }
 
 # 2. Copy repo (backend + built UI) ----------------------------------------
+# Upgrade case: the services hold files open (node has native .node modules
+# memory-mapped) - stop them first so the copy + npm install don't hit locks.
+# They are restarted at the end of this script.
+foreach ($svcName in @('nginx', 'wm-manager')) {
+  $svc = Get-Service $svcName -ErrorAction SilentlyContinue
+  if ($svc -and $svc.Status -eq 'Running') {
+    Info "stopping $svcName (upgrade in progress)"
+    Stop-Service $svcName -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+  }
+}
+
 Info "copying backend from $RepoDir\backend"
 robocopy "$RepoDir\backend" "$Root\app\backend" /MIR /XD node_modules /NFL /NDL /NJH /NJS /NP | Out-Null
 if (Test-Path "$RepoDir\ui\build\web\index.html") {
