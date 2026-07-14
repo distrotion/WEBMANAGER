@@ -92,6 +92,11 @@ module.exports = Object.assign({
     httpRoot: ${JSON.stringify(httpRoot)},
     flowFile: 'flows.json',
     functionGlobalContext: {},
+    // Several contrib nodes read RED.settings.logging.console.level directly and
+    // their constructor CRASHES (silent dead node, no status) when the settings
+    // file has no logging section — e.g. node-red-contrib-mcprotocol*. The full
+    // Node-RED template always ships one, so always provide it here too.
+    logging: { console: { level: 'info', metrics: false, audit: false } },
 }, userCfg);
 `;
   fs.writeFileSync(path.join(userDir, 'settings.js'), settings, 'utf8');
