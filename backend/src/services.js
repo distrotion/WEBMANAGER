@@ -28,12 +28,18 @@ function noderedRedJs() {
   return path.join(config.paths.runtimes, 'node-red', 'node_modules', 'node-red', 'red.js');
 }
 
+// Pin to Node-RED major 4: brand-new majors (5.x) silently break older contrib
+// nodes (seen in the field: mcprotocol-ind loads but never connects on 5.0.1).
+// Override with settings key nodered_version if a different pin is ever needed.
+const NODERED_VERSION = 'node-red@4';
+
 async function ensureNodeRedRuntime(channel) {
   if (fs.existsSync(noderedRedJs())) return true;
   const dir = path.join(config.paths.runtimes, 'node-red');
-  emitLog(channel, '[node-red] runtime not installed — installing now (npm i node-red, this can take a few minutes)…');
+  const pkg = require('./settings').get('nodered_version') || NODERED_VERSION;
+  emitLog(channel, `[node-red] runtime not installed — installing ${pkg} now (this can take a few minutes)…`);
   fs.mkdirSync(dir, { recursive: true });
-  const r = await run('npm', ['install', 'node-red', '--no-audit', '--no-fund', '--prefix', dir], {
+  const r = await run('npm', ['install', pkg, '--no-audit', '--no-fund', '--prefix', dir], {
     channel,
     shell: true, // npm is npm.cmd on Windows
   });

@@ -13,6 +13,7 @@ Write-Host "[nodered] installing node-red into $dir ..." -ForegroundColor Cyan
 # node npm-cli.js directly — the npm.ps1 shim mangles args on some hosts
 $NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
 if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
-& $NodeExe (Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js") install node-red
+# pinned to major 4 — Node-RED 5.x breaks older contrib nodes (e.g. mcprotocol-ind)
+& $NodeExe (Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js") install node-red@4
 Pop-Location
 Write-Host "[nodered] done. red.js at $dir\node_modules\node-red\red.js" -ForegroundColor Green
