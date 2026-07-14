@@ -106,6 +106,51 @@ class Api {
     await prefs.remove(_kUserInfo);
   }
 
+  // ---- fleet (แม่/ลูก) ----
+  Future<Map<String, dynamic>> fleetInfo() async {
+    final r = await http.get(_u('/api/fleet'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('fleet info failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> setFleetRole(String role) async {
+    final r = await http.put(_u('/api/fleet'),
+        headers: _headers, body: jsonEncode({'role': role}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'role failed');
+  }
+
+  Future<String> genFleetToken() async {
+    final r = await http.post(_u('/api/fleet/token'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'token failed');
+    return jsonDecode(r.body)['token'] as String;
+  }
+
+  Future<void> revokeFleetToken() async {
+    await http.delete(_u('/api/fleet/token'), headers: _headers);
+  }
+
+  Future<List<Map<String, dynamic>>> fleetRemotes() async {
+    final r = await http.get(_u('/api/fleet/remotes'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('remotes failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> addFleetRemote(String name, String url, String token) async {
+    final r = await http.post(_u('/api/fleet/remotes'),
+        headers: _headers, body: jsonEncode({'name': name, 'url': url, 'token': token}));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'add failed');
+  }
+
+  Future<void> deleteFleetRemote(int id) async {
+    await http.delete(_u('/api/fleet/remotes/$id'), headers: _headers);
+  }
+
+  Future<List<Map<String, dynamic>>> fleetOverview() async {
+    final r = await http.get(_u('/api/fleet/overview'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('overview failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
   /// Backend build version (git hash stamped at install) — for "อัพรึยัง" checks.
   Future<String> serverVersion() async {
     try {

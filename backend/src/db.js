@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS remotes (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name  TEXT UNIQUE NOT NULL,
+  url   TEXT NOT NULL,            -- http://host:8088 (no trailing slash)
+  token TEXT NOT NULL             -- that server's fleet service token
+);
+
 CREATE TABLE IF NOT EXISTS logs (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT NOT NULL,           -- site-<id> | system

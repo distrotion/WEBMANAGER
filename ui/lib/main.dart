@@ -10,6 +10,7 @@ import 'users.dart';
 import 'shell_console.dart';
 import 'audit.dart';
 import 'download.dart';
+import 'fleet.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
 // so a backgrounded panel costs the server (almost) nothing.
@@ -249,6 +250,8 @@ class _SitesPageState extends State<SitesPage> {
             onSelected: (v) async {
               if (v == 'users') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UsersPage()));
+              } else if (v == 'fleet') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FleetPage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -273,6 +276,8 @@ class _SitesPageState extends State<SitesPage> {
               const PopupMenuDivider(),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'users', child: ListTile(leading: Icon(Icons.group), title: Text('Users'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'fleet', child: ListTile(leading: Icon(Icons.hub), title: Text('Fleet (แม่/ลูก)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)

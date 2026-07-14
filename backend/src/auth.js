@@ -40,7 +40,18 @@ function verifyToken(token) {
 function authMiddleware(req, res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
-  const payload = token && verifyToken(token);
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  // Fleet service token (agent role): lets a hub webmanager call this one.
+  // Long random string generated on demand, revocable in the Fleet page.
+  if (token.startsWith('wmt_')) {
+    const t = require('./settings').get('fleet_token');
+    if (t && token === t) {
+      req.user = { username: 'fleet-hub', role: 'admin' };
+      return next();
+    }
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const payload = verifyToken(token);
   if (!payload) return res.status(401).json({ error: 'unauthorized' });
   req.user = payload;
   next();
