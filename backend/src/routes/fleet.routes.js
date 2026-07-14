@@ -14,16 +14,22 @@ const adminOnly = (req, res, next) =>
   req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
 
 // ---- role + service token ----
+// role: 'standalone' (default — a normal lone webmanager, no fleet), 'agent'
+// (ลูก — a hub may watch/control it), 'hub' (แม่ — watches others).
+const ROLES = ['standalone', 'agent', 'hub'];
 router.get('/', (req, res) =>
   res.json({
-    role: settings.get('fleet_role') || 'agent',
+    role: settings.get('fleet_role') || 'standalone',
     hasToken: !!settings.get('fleet_token'),
   })
 );
 
 router.put('/', adminOnly, (req, res) => {
-  const role = req.body && req.body.role === 'hub' ? 'hub' : 'agent';
+  const role = ROLES.includes(req.body && req.body.role) ? req.body.role : 'standalone';
   settings.set('fleet_role', role);
+  // A standalone server takes part in no fleet — drop its service token so it
+  // stops accepting hub calls.
+  if (role === 'standalone') settings.del('fleet_token');
   audit(req.user, 'fleet-role', role);
   res.json({ role });
 });

@@ -14,7 +14,7 @@ class FleetPage extends StatefulWidget {
 }
 
 class _FleetPageState extends State<FleetPage> {
-  String _role = 'agent';
+  String _role = 'standalone';
   bool _hasToken = false;
   String? _freshToken; // shown once right after generating
   bool _loading = true;
@@ -52,7 +52,7 @@ class _FleetPageState extends State<FleetPage> {
   Future<void> _load() async {
     try {
       final info = await Api.instance.fleetInfo();
-      _role = info['role'] ?? 'agent';
+      _role = info['role'] ?? 'standalone';
       _hasToken = info['hasToken'] == true;
       if (_role == 'hub') {
         _remotes = await Api.instance.fleetRemotes();
@@ -122,6 +122,22 @@ class _FleetPageState extends State<FleetPage> {
                   Text(_error!, style: const TextStyle(color: Colors.redAccent)),
                 _roleCard(),
                 const SizedBox(height: 12),
+                if (_role == 'standalone')
+                  const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Row(children: [
+                        Icon(Icons.check_circle, color: Colors.greenAccent),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'เครื่องนี้ทำงานเดี่ยว ไม่เชื่อมกับเครื่องอื่น — ไม่มีใครสั่งข้ามเครื่องได้\nถ้าจะให้เครื่องแม่ดูแล เลือก "ลูก" · ถ้าจะเป็นศูนย์กลางคุมเครื่องอื่น เลือก "แม่"',
+                            style: TextStyle(fontSize: 12, color: Colors.white54),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
                 if (_role == 'agent') ...[
                   _joinCard(),
                   const SizedBox(height: 12),
@@ -153,8 +169,9 @@ class _FleetPageState extends State<FleetPage> {
           const SizedBox(height: 10),
           SegmentedButton<String>(
             segments: const [
-              ButtonSegment(value: 'agent', icon: Icon(Icons.dns), label: Text('ลูก (agent)')),
-              ButtonSegment(value: 'hub', icon: Icon(Icons.hub), label: Text('แม่ (hub)')),
+              ButtonSegment(value: 'standalone', icon: Icon(Icons.computer), label: Text('อยู่คนเดียว')),
+              ButtonSegment(value: 'agent', icon: Icon(Icons.dns), label: Text('ลูก')),
+              ButtonSegment(value: 'hub', icon: Icon(Icons.hub), label: Text('แม่')),
             ],
             selected: {_role},
             onSelectionChanged: (s) => _setRole(s.first),
@@ -162,8 +179,10 @@ class _FleetPageState extends State<FleetPage> {
           const SizedBox(height: 8),
           Text(
             _role == 'hub'
-                ? 'เครื่องนี้เป็นศูนย์กลาง: เห็นสถานะทุก server ลูกในหน้าเดียว'
-                : 'เครื่องนี้เป็นลูก: สร้าง token ด้านล่างไปกรอกที่เครื่องแม่',
+                ? 'แม่ (hub): เป็นศูนย์กลาง เห็น + สั่งงานทุก server ลูกในหน้าเดียว'
+                : _role == 'agent'
+                    ? 'ลูก (agent): ให้เครื่องแม่ดูแล/สั่งงานได้ — สมัครเข้าแม่หรือสร้าง token ด้านล่าง'
+                    : 'อยู่คนเดียว (standalone): ทำงานเดี่ยว ไม่ยุ่งกับ fleet (ค่าเริ่มต้น)',
             style: const TextStyle(fontSize: 12, color: Colors.white54),
           ),
         ]),
