@@ -20,7 +20,7 @@ async function remoteHead(site) {
   const r = await run(config.git.exe, ['ls-remote', url, branch], {
     channel: 'silent',
     env: git.gitEnv(),
-    redact: settings.get('git_token') || undefined,
+    redact: git.tokenFor(site.repo_url) || undefined,
   });
   if (r.code !== 0) return null;
   return (r.out || '').trim().split(/\s+/)[0] || null;

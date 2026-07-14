@@ -9,14 +9,40 @@ function repoDir(site) {
   return path.join(config.paths.sites, site.name, 'repo');
 }
 
-function token() {
+// Pick the token for a repo URL: a per-host credential whose host matches the
+// URL's host wins; otherwise the legacy single shared token (git_token).
+function tokenFor(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    const db = require('./db');
+    const rows = db.prepare('SELECT host, token FROM git_credentials').all();
+    const hit = rows.find((r) => {
+      const h = String(r.host).toLowerCase();
+      return host === h || host.endsWith('.' + h);
+    });
+    if (hit) return hit.token;
+  } catch {
+    /* not a parseable URL / no table yet */
+  }
+  return settings.get('git_token');
+}
+
+// Any token configured at all (for masking in logs).
+function anyToken() {
+  try {
+    const db = require('./db');
+    const r = db.prepare('SELECT token FROM git_credentials LIMIT 1').get();
+    if (r) return r.token;
+  } catch {
+    /* ignore */
+  }
   return settings.get('git_token');
 }
 
 // Inject a PAT into https URLs so private repos work without an interactive prompt.
 // SSH / non-https URLs are returned unchanged (use a deploy key + agent for those).
 function authedUrl(url) {
-  const t = token();
+  const t = tokenFor(url);
   if (t && /^https:\/\//i.test(url)) {
     return url.replace(/^https:\/\//i, `https://x-access-token:${t}@`);
   }
@@ -41,7 +67,7 @@ async function ensureRepo(site, channel) {
   const dir = repoDir(site);
   const branch = site.branch || 'main';
   const url = authedUrl(site.repo_url);
-  const opts = { channel, env: gitEnv(), redact: token() || undefined };
+  const opts = { channel, env: gitEnv(), redact: tokenFor(site.repo_url) || undefined };
 
   if (fs.existsSync(path.join(dir, '.git'))) {
     return run(config.git.exe, ['-C', dir, 'pull', url, branch], opts);
@@ -71,8 +97,8 @@ function lsRemote(url, channel) {
   return run(config.git.exe, ['ls-remote', authedUrl(url)], {
     channel,
     env: gitEnv(),
-    redact: token() || undefined,
+    redact: tokenFor(url) || undefined,
   });
 }
 
-module.exports = { repoDir, ensureRepo, currentCommit, authedUrl, gitEnv, lsRemote };
+module.exports = { repoDir, ensureRepo, currentCommit, authedUrl, gitEnv, lsRemote, tokenFor, anyToken };

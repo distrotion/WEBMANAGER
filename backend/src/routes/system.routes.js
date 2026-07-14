@@ -31,6 +31,35 @@ router.post('/git-credentials/test', (req, res) => {
   git.lsRemote(url, 'system');
 });
 
+// --- Multiple git credentials, one per host (e.g. github.com, gitlab.com,
+// git.company.com). The token whose host matches a repo URL is used; the legacy
+// single git_token above still works as a catch-all fallback. ---
+const db = require('../db');
+router.get('/git-credentials/list', (req, res) => {
+  res.json(db.prepare('SELECT id, name, host FROM git_credentials ORDER BY host').all());
+});
+router.post('/git-credentials/list', (req, res) => {
+  const b = req.body || {};
+  let host = String(b.host || '').trim().toLowerCase();
+  const token = String(b.token || '').trim();
+  if (!host || !token) return res.status(400).json({ error: 'host and token required' });
+  // accept a pasted URL and reduce to its hostname
+  try { if (/\//.test(host)) host = new URL(host.includes('://') ? host : 'https://' + host).hostname; } catch { /* keep as typed */ }
+  try {
+    db.prepare(
+      `INSERT INTO git_credentials (name, host, token) VALUES (?,?,?)
+       ON CONFLICT(host) DO UPDATE SET name=excluded.name, token=excluded.token`
+    ).run(String(b.name || '').trim() || null, host, token);
+    res.status(201).json({ ok: true, host });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+router.delete('/git-credentials/list/:id', (req, res) => {
+  db.prepare('DELETE FROM git_credentials WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 router.get('/requirements', async (req, res) => {
   try {
     res.json(await system.requirements());

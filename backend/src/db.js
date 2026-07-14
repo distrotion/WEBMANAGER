@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS remotes (
   token TEXT NOT NULL             -- that server's fleet service token
 );
 
+CREATE TABLE IF NOT EXISTS git_credentials (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name  TEXT,                         -- label, e.g. "work github"
+  host  TEXT UNIQUE NOT NULL,         -- match on repo URL host, e.g. github.com
+  token TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS gateways (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,

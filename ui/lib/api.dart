@@ -228,6 +228,23 @@ class Api {
     await http.delete(_u('/api/system/git-credentials'), headers: _headers);
   }
 
+  // Multiple per-host git credentials.
+  Future<List<Map<String, dynamic>>> gitCredentials() async {
+    final r = await http.get(_u('/api/system/git-credentials/list'), headers: _headers);
+    if (r.statusCode != 200) return [];
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> addGitCredential(String name, String host, String token) async {
+    final r = await http.post(_u('/api/system/git-credentials/list'),
+        headers: _headers, body: jsonEncode({'name': name, 'host': host, 'token': token}));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'save failed');
+  }
+
+  Future<void> deleteGitCredential(int id) async {
+    await http.delete(_u('/api/system/git-credentials/list/$id'), headers: _headers);
+  }
+
   Future<void> testGitToken(String url) async {
     await http.post(_u('/api/system/git-credentials/test'),
         headers: _headers, body: jsonEncode({'url': url}));

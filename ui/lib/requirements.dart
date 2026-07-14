@@ -229,9 +229,13 @@ class GitCredentialsCard extends StatefulWidget {
 class _GitCredentialsCardState extends State<GitCredentialsCard> {
   final _token = TextEditingController();
   final _testUrl = TextEditingController();
+  final _host = TextEditingController();
+  final _name = TextEditingController();
+  final _hostToken = TextEditingController();
   bool _hasToken = false;
   bool _busy = false;
   String? _msg;
+  List<Map<String, dynamic>> _creds = [];
 
   @override
   void initState() {
@@ -241,7 +245,25 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
 
   Future<void> _refresh() async {
     final has = await Api.instance.gitHasToken();
-    if (mounted) setState(() => _hasToken = has);
+    final creds = await Api.instance.gitCredentials();
+    if (mounted) setState(() { _hasToken = has; _creds = creds; });
+  }
+
+  Future<void> _addCred() async {
+    if (_host.text.trim().isEmpty || _hostToken.text.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await Api.instance.addGitCredential(_name.text.trim(), _host.text.trim(), _hostToken.text.trim());
+      _name.clear();
+      _host.clear();
+      _hostToken.clear();
+      setState(() => _msg = 'Credential saved.');
+      await _refresh();
+    } catch (e) {
+      setState(() => _msg = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _save() async {
@@ -298,7 +320,7 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
                 decoration: const InputDecoration(
                   isDense: true,
                   border: OutlineInputBorder(),
-                  labelText: 'GitHub Personal Access Token',
+                  labelText: 'Shared token — fallback ทุก host',
                   hintText: 'ghp_...',
                 ),
               ),
@@ -309,6 +331,51 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
               const SizedBox(width: 6),
               OutlinedButton(onPressed: _busy ? null : _clear, child: const Text('Clear')),
             ],
+          ]),
+          const Divider(height: 26),
+          const Text('Per-host tokens (หลาย account / หลาย git server)',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const Text('token ที่ host ตรงกับ repo URL จะถูกใช้ก่อน · ตัวด้านบนเป็น fallback ทุก host',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          const SizedBox(height: 8),
+          for (final c in _creds)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.vpn_key, size: 16, color: Colors.greenAccent),
+              title: Text(c['host'] ?? '', style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+              subtitle: (c['name'] ?? '').toString().isEmpty ? null : Text(c['name']),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
+                onPressed: () async { await Api.instance.deleteGitCredential(c['id']); await _refresh(); },
+              ),
+            ),
+          Row(children: [
+            SizedBox(
+              width: 150,
+              child: TextField(
+                controller: _host,
+                decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'host', hintText: 'github.com'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 120,
+              child: TextField(
+                controller: _name,
+                decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'ชื่อ (ไม่บังคับ)'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _hostToken,
+                obscureText: true,
+                decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'token', hintText: 'ghp_… / glpat_…'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: _busy ? null : _addCred, child: const Text('Add')),
           ]),
           const SizedBox(height: 10),
           Row(children: [
