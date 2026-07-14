@@ -8,7 +8,15 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **Two-layer nginx** — each app on its own **direct port** (layer 1, toggle on/off, firewall
   managed automatically) and behind a shared **front on 80/443 with TLS** (layer 2), by
   **subdomain** or **path**.
-- **Runtimes** — static Flutter web, **Node-RED** (start/stop/restart), and Node backends.
+- **Runtimes** — static Flutter web, **Node-RED** (auto-installs the shared runtime on
+  first start; CORS + editor-login togglable), and Node backends managed by **PM2**
+  (live CPU/RAM/status, PM2-list view, reboot-safe).
+- **CI/CD auto-deploy** — watch a git branch and Pull & Deploy automatically on new commits.
+- **Fleet (แม่/ลูก)** — one webmanager (hub) manages many others (agents): live fleet
+  dashboard, and a server switcher that reroutes the whole panel (sites, deploy, logs,
+  console) through the hub to any child. Children can self-register at the hub.
+- **Remote Gateway** — raw-TCP port forwarders (tunnel HTTP/WS/TLS to any host:port).
+- **Port tools** — inspect and kill whatever holds a port, from the panel.
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
 - **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
 - **Multi-user** — admin-managed accounts and roles; login is remembered.
@@ -105,9 +113,38 @@ The backend serves the built UI itself, so one process = the whole panel.
 4. **Edit** a site anytime (branch/repo/source/port/exposure), then Pull & Deploy to apply.
 5. **Issue SSL**, **Reload nginx**, **Restart**, toggle the **direct port** (firewall auto).
 6. **Console** (admin) — a real shell in the site's folder or server-wide.
-7. **Account menu** (admin) — manage **Users**, change password, requirements page.
+7. **Account menu** (admin) — **Users**, **Fleet** (แม่/ลูก), **Remote Gateway**, change
+   password, requirements page (with **Port tools**: inspect / kill a port).
 
 Login and the create-site form defaults are remembered across refreshes.
+
+---
+
+## Remote Gateway (raw-TCP port forward)
+
+**Account menu → Remote Gateway** (admin). Each gateway opens a **listen port** on this
+server and pipes bytes two-way to a **destination `host:port`** — tunnelling HTTP,
+WebSocket, and TLS transparently (no path rewrite; the target handles its own auth).
+
+- Fields: `name`, `listen_port` (opened here), `dest_host` + `dest_port` (target),
+  optional `bind_host` (limit interface), `max_conns`, and an auto-expiry (1/2/8/24 h).
+- Changes reconcile **live** (no restart); expired tunnels retire automatically; the
+  listen port's firewall rule opens/closes with the gateway.
+- `listen_port` can't collide with the manager's own port or a site's direct port, and
+  can't be reused by another gateway.
+- Example: `Line-B HMI · :8080 → 172.23.10.50:3012` — browse `http://<server>:8080` to
+  reach serverB's HMI through this manager.
+
+## Fleet — one hub, many servers (แม่/ลูก)
+
+**Account menu → Fleet** (admin). Set each server's role:
+
+- **ลูก (agent)** — generate a revocable service token, or use **"สมัครเข้ากับเครื่องแม่"**
+  to self-register: enter the hub URL + hub admin password once and the child registers
+  itself (name/url/token) at the hub.
+- **แม่ (hub)** — see every child's health/version/sites/PM2 in one dashboard. A server
+  switcher (chips under the app bar) reroutes the **entire** panel — sites, Pull & Deploy,
+  live logs, shell console, port tools, gateways — through the hub to the selected child.
 
 ---
 
@@ -115,7 +152,8 @@ Login and the create-site form defaults are remembered across refreshes.
 ```
 setup.cmd / setup.ps1   one-click Windows setup (check + install + verify)
 backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
-            firewall, NSSM process control, win-acme, WebSocket logs + shell (pty)
+            firewall, PM2/NSSM process control, win-acme, WebSocket logs + shell (pty),
+            autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward), ports
 ui/         Flutter web control panel
 deploy/     install.ps1, uninstall.ps1, install-nodered.ps1, bundled tools\nssm.exe
 scripts/    start/stop/status for macOS/Linux + Windows
