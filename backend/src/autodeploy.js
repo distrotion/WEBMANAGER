@@ -13,7 +13,7 @@ const { emitLog } = require('./logbus');
 
 const inFlight = new Set(); // site ids currently deploying
 
-// Tip commit (short) of the site's branch on the remote, or null on failure.
+// Tip commit (full sha) of the site's branch on the remote, or null on failure.
 async function remoteHead(site) {
   const url = git.authedUrl(site.repo_url);
   const branch = site.branch || 'main';
@@ -23,8 +23,17 @@ async function remoteHead(site) {
     redact: settings.get('git_token') || undefined,
   });
   if (r.code !== 0) return null;
-  const sha = (r.out || '').trim().split(/\s+/)[0];
-  return sha ? sha.slice(0, 7) : null;
+  return (r.out || '').trim().split(/\s+/)[0] || null;
+}
+
+// last_commit comes from `git rev-parse --short`, whose length VARIES (7, 8, …
+// chars — git extends it when a shorter prefix would be ambiguous). Comparing at
+// a fixed length caused endless "new commit" redeploys every tick, so compare as
+// prefixes instead.
+function sameCommit(a, b) {
+  if (!a || !b) return false;
+  const n = Math.min(a.length, b.length);
+  return n >= 7 && a.slice(0, n) === b.slice(0, n);
 }
 
 async function checkOne(site) {
@@ -33,9 +42,9 @@ async function checkOne(site) {
   const channel = `site-${site.id}`;
   const remote = await remoteHead(site);
   if (!remote) return; // network / auth issue — try again next tick
-  if (remote === site.last_commit) return; // up to date
+  if (sameCommit(remote, site.last_commit)) return; // up to date
   inFlight.add(site.id);
-  emitLog(channel, `[auto-deploy] new commit ${remote} (deployed ${site.last_commit || 'none'}) — deploying`);
+  emitLog(channel, `[auto-deploy] new commit ${remote.slice(0, 8)} (deployed ${site.last_commit || 'none'}) — deploying`);
   try {
     const user = { username: 'auto-deploy' };
     if (site.runtime === 'static') await deploy.deployStatic(site, user);
@@ -77,4 +86,4 @@ function start() {
   }, intervalMs()).unref();
 }
 
-module.exports = { start, tick, checkOne, remoteHead };
+module.exports = { start, tick, checkOne, remoteHead, sameCommit };
