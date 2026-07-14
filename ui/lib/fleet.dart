@@ -28,6 +28,14 @@ class _FleetPageState extends State<FleetPage> {
   final _url = TextEditingController();
   final _token = TextEditingController();
 
+  // agent join-hub state
+  final _hubUrl = TextEditingController();
+  final _hubUser = TextEditingController(text: 'admin');
+  final _hubPass = TextEditingController();
+  final _myName = TextEditingController(text: Uri.base.host);
+  final _myUrl = TextEditingController(text: Uri.base.origin);
+  bool _joining = false;
+
   @override
   void initState() {
     super.initState();
@@ -114,7 +122,11 @@ class _FleetPageState extends State<FleetPage> {
                   Text(_error!, style: const TextStyle(color: Colors.redAccent)),
                 _roleCard(),
                 const SizedBox(height: 12),
-                if (_role == 'agent') _agentCard(),
+                if (_role == 'agent') ...[
+                  _joinCard(),
+                  const SizedBox(height: 12),
+                  _agentCard(),
+                ],
                 if (_role == 'hub') ...[
                   _serversCard(),
                   const SizedBox(height: 12),
@@ -154,6 +166,91 @@ class _FleetPageState extends State<FleetPage> {
                 : 'เครื่องนี้เป็นลูก: สร้าง token ด้านล่างไปกรอกที่เครื่องแม่',
             style: const TextStyle(fontSize: 12, color: Colors.white54),
           ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _join() async {
+    setState(() => _joining = true);
+    try {
+      await Api.instance.fleetJoin(
+        _hubUrl.text.trim(),
+        _hubUser.text.trim(),
+        _hubPass.text,
+        _myName.text.trim(),
+        _myUrl.text.trim(),
+      );
+      _hubPass.clear();
+      setState(() => _hasToken = true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('สมัครเข้ากับเครื่องแม่สำเร็จ ✓ — ไปดูที่ Fleet dashboard ของแม่ได้เลย')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _joining = false);
+    }
+  }
+
+  Widget _joinCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('สมัครเข้ากับเครื่องแม่ (ทางลัด — ไม่ต้อง copy token เอง)',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('กรอกที่อยู่เครื่องแม่ + รหัส admin ของแม่ครั้งเดียว เครื่องนี้จะสร้าง token และลงทะเบียนตัวเองให้เสร็จ (รหัสไม่ถูกเก็บ)',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+                flex: 3,
+                child: TextField(
+                    controller: _hubUrl,
+                    decoration: const InputDecoration(
+                        labelText: 'URL เครื่องแม่', hintText: 'http://172.23.10.99:8088', isDense: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                flex: 2,
+                child: TextField(
+                    controller: _hubUser,
+                    decoration: const InputDecoration(labelText: 'admin ของแม่', isDense: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                flex: 2,
+                child: TextField(
+                    controller: _hubPass,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'รหัสผ่านแม่', isDense: true))),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+                flex: 2,
+                child: TextField(
+                    controller: _myName,
+                    decoration: const InputDecoration(labelText: 'ชื่อเครื่องนี้ (โชว์ที่แม่)', isDense: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                flex: 3,
+                child: TextField(
+                    controller: _myUrl,
+                    decoration: const InputDecoration(
+                        labelText: 'URL เครื่องนี้ (ที่แม่มองเห็น)', isDense: true))),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: _joining ? null : _join,
+              icon: _joining
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.link, size: 16),
+              label: const Text('สมัคร'),
+            ),
+          ]),
         ]),
       ),
     );

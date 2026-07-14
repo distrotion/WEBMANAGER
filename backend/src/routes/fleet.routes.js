@@ -54,13 +54,61 @@ router.post('/remotes', adminOnly, (req, res) => {
   }
   const url = String(b.url).trim().replace(/\/+$/, '');
   try {
-    const info = db
-      .prepare('INSERT INTO remotes (name, url, token) VALUES (?,?,?)')
-      .run(String(b.name).trim(), url, String(b.token).trim());
+    // upsert by name: re-joining (e.g. after a token rotate) updates in place
+    db.prepare(
+      `INSERT INTO remotes (name, url, token) VALUES (?,?,?)
+       ON CONFLICT(name) DO UPDATE SET url=excluded.url, token=excluded.token`
+    ).run(String(b.name).trim(), url, String(b.token).trim());
+    const row = db.prepare('SELECT id, name, url FROM remotes WHERE name=?').get(String(b.name).trim());
     audit(req.user, 'fleet-add-server', b.name, url);
-    res.status(201).json({ id: info.lastInsertRowid, name: b.name, url });
+    res.status(201).json(row);
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// ---- child self-registration (สมัครเข้ากับแม่จากหน้าลูก) ----
+// The child logs into the hub with the hub-admin credentials ONCE (not stored),
+// then registers its own name/url/token there. Run on the child.
+router.post('/join', adminOnly, async (req, res) => {
+  const b = req.body || {};
+  if (!b.hubUrl || !b.username || !b.password || !b.myName || !b.myUrl) {
+    return res.status(400).json({ error: 'hubUrl, username, password, myName, myUrl required' });
+  }
+  const hubUrl = String(b.hubUrl).trim().replace(/\/+$/, '');
+  // reuse the existing service token so earlier registrations keep working
+  let token = settings.get('fleet_token');
+  if (!token) {
+    token = 'wmt_' + crypto.randomBytes(24).toString('hex');
+    settings.set('fleet_token', token);
+  }
+  try {
+    const lr = await fetch(`${hubUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: b.username, password: b.password }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!lr.ok) return res.status(401).json({ error: 'hub login failed (user/password ของแม่ไม่ถูก)' });
+    const jwt = (await lr.json()).token;
+    const rr = await fetch(`${hubUrl}/api/fleet/remotes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({
+        name: String(b.myName).trim(),
+        url: String(b.myUrl).trim().replace(/\/+$/, ''),
+        token,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (rr.status !== 201) {
+      const e = await rr.json().catch(() => ({}));
+      return res.status(400).json({ error: e.error || `hub returned ${rr.status}` });
+    }
+    audit(req.user, 'fleet-join', hubUrl);
+    res.json({ ok: true, hub: hubUrl });
+  } catch (e) {
+    res.status(502).json({ error: `hub unreachable: ${e.message}` });
   }
 });
 

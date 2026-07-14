@@ -164,6 +164,21 @@ class Api {
     await http.delete(_u('/api/fleet/remotes/$id'), headers: _headers);
   }
 
+  /// Child self-registration: this server signs itself up at the hub.
+  Future<void> fleetJoin(String hubUrl, String username, String password,
+      String myName, String myUrl) async {
+    final r = await http.post(_u('/api/fleet/join'),
+        headers: _headers,
+        body: jsonEncode({
+          'hubUrl': hubUrl,
+          'username': username,
+          'password': password,
+          'myName': myName,
+          'myUrl': myUrl,
+        }));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'join failed');
+  }
+
   Future<List<Map<String, dynamic>>> fleetOverview() async {
     final r = await http.get(_u('/api/fleet/overview'), headers: _headers);
     if (r.statusCode != 200) throw Exception('overview failed');
