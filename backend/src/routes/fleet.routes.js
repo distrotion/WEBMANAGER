@@ -6,12 +6,25 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const config = require('../config');
 const settings = require('../settings');
 const { audit } = require('../audit');
 
 const router = express.Router();
 const adminOnly = (req, res, next) =>
   req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
+
+// A hub must not register itself as its own child (would show up twice / loop).
+function pointsToSelf(url) {
+  try {
+    const u = new URL(url);
+    const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname);
+    const port = parseInt(u.port || '80', 10);
+    return loopback && port === config.PORT;
+  } catch {
+    return false;
+  }
+}
 
 // ---- role + service token ----
 // role: 'standalone' (default — a normal lone webmanager, no fleet), 'agent'
@@ -59,6 +72,9 @@ router.post('/remotes', adminOnly, (req, res) => {
     return res.status(400).json({ error: 'name, url and token are required' });
   }
   const url = String(b.url).trim().replace(/\/+$/, '');
+  if (pointsToSelf(url)) {
+    return res.status(400).json({ error: 'URL นี้ชี้กลับมาที่เครื่องแม่เอง — ใส่ IP/URL ของเครื่องลูกจริง' });
+  }
   try {
     // upsert by name: re-joining (e.g. after a token rotate) updates in place
     db.prepare(
