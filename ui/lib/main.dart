@@ -867,10 +867,10 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
   Future<void> _load() async {
     try {
       final c = await Api.instance.noderedSettings(widget.site['id']);
-      _ctrl.text = c;
+      _ctrl.text = _sanitizeHeader(c);
       _authOn = _authEnabled;
       final m = RegExp(r"^\s*adminAuth\s*:.*username:\s*'([^']*)'", multiLine: true)
-          .firstMatch(c);
+          .firstMatch(_body);
       if (m != null) _authUser.text = m.group(1)!;
     } catch (e) {
       _error = '$e';
@@ -878,30 +878,50 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
     if (mounted) setState(() => _loading = false);
   }
 
+  // The file's doc header contains example lines (// httpNodeCors: …) that must
+  // never be uncommented — all toggles below operate ONLY on the part from
+  // `module.exports` onward. This also repairs files broken by the old toggle,
+  // which could uncomment a header example and make the file invalid JS.
+  int get _exportsStart =>
+      RegExp(r'module\.exports\s*=\s*\{').firstMatch(_ctrl.text)?.start ?? 0;
+  String get _head => _ctrl.text.substring(0, _exportsStart);
+  String get _body => _ctrl.text.substring(_exportsStart);
+
+  static String _sanitizeHeader(String t) {
+    final ei = RegExp(r'module\.exports\s*=\s*\{').firstMatch(t)?.start;
+    if (ei == null) return t;
+    final head = t.substring(0, ei).replaceAllMapped(
+          RegExp(r'^(\s*)((?:httpNodeCors|adminAuth)\s*:.*)$', multiLine: true),
+          (m) => '${m.group(1)}// ${m.group(2)}',
+        );
+    return head + t.substring(ei);
+  }
+
   bool get _corsEnabled =>
-      RegExp(r'^\s*httpNodeCors\s*:', multiLine: true).hasMatch(_ctrl.text);
+      RegExp(r'^\s*httpNodeCors\s*:', multiLine: true).hasMatch(_body);
 
   bool get _authEnabled =>
-      RegExp(r'^\s*adminAuth\s*:', multiLine: true).hasMatch(_ctrl.text);
+      RegExp(r'^\s*adminAuth\s*:', multiLine: true).hasMatch(_body);
 
-  // Toggle the CORS line: uncomment/insert it, or comment it out.
+  // Toggle the CORS line INSIDE module.exports: uncomment/insert it, or comment it out.
   void _toggleCors(bool on) {
-    var t = _ctrl.text;
+    final head = _head;
+    var body = _body;
     if (on) {
-      // uncomment an existing commented line, else insert after module.exports = {
       final commented = RegExp(r'^\s*//\s*(httpNodeCors\s*:.*)$', multiLine: true);
-      if (commented.hasMatch(t)) {
-        t = t.replaceFirstMapped(commented, (m) => '  ${m.group(1)}');
+      if (commented.hasMatch(body)) {
+        body = body.replaceFirstMapped(commented, (m) => '  ${m.group(1)}');
       } else if (!_corsEnabled) {
-        t = t.replaceFirst(RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$_corsLine');
+        body = body.replaceFirst(
+            RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$_corsLine');
       }
     } else {
-      t = t.replaceAllMapped(
+      body = body.replaceAllMapped(
         RegExp(r'^(\s*)(httpNodeCors\s*:.*)$', multiLine: true),
         (m) => '${m.group(1)}// ${m.group(2)}',
       );
     }
-    setState(() => _ctrl.text = t);
+    setState(() => _ctrl.text = head + body);
   }
 
   // Apply the editor-login switch to the settings text: insert/replace a
@@ -919,22 +939,24 @@ class _NoderedSettingsDialogState extends State<NoderedSettingsDialog> {
       final hash = await Api.instance.noderedHash(widget.site['id'], _authPass.text);
       final line =
           "  adminAuth: { type: 'credentials', users: [{ username: '$user', password: '$hash', permissions: '*' }] },";
-      var t = _ctrl.text;
+      final head = _head;
+      var body = _body;
       final active = RegExp(r'^\s*adminAuth\s*:.*$', multiLine: true);
       final commented = RegExp(r'^\s*//\s*adminAuth\s*:.*$', multiLine: true);
-      if (active.hasMatch(t)) {
-        t = t.replaceFirst(active, line);
-      } else if (commented.hasMatch(t)) {
-        t = t.replaceFirst(commented, line);
+      if (active.hasMatch(body)) {
+        body = body.replaceFirst(active, line);
+      } else if (commented.hasMatch(body)) {
+        body = body.replaceFirst(commented, line);
       } else {
-        t = t.replaceFirst(RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$line');
+        body = body.replaceFirst(RegExp(r'module\.exports\s*=\s*\{'), 'module.exports = {\n$line');
       }
-      _ctrl.text = t;
+      _ctrl.text = head + body;
     } else if (_authEnabled) {
-      _ctrl.text = _ctrl.text.replaceAllMapped(
-        RegExp(r'^(\s*)(adminAuth\s*:.*)$', multiLine: true),
-        (m) => '${m.group(1)}// ${m.group(2)}',
-      );
+      _ctrl.text = _head +
+          _body.replaceAllMapped(
+            RegExp(r'^(\s*)(adminAuth\s*:.*)$', multiLine: true),
+            (m) => '${m.group(1)}// ${m.group(2)}',
+          );
     }
   }
 
