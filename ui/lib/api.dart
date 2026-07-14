@@ -164,6 +164,12 @@ class Api {
     await http.delete(_u('/api/fleet/remotes/$id'), headers: _headers);
   }
 
+  Future<void> renameFleetRemote(int id, String name, String url) async {
+    final r = await http.put(_u('/api/fleet/remotes/$id'),
+        headers: _headers, body: jsonEncode({'name': name, 'url': url}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'rename failed');
+  }
+
   /// Child self-registration: this server signs itself up at the hub.
   Future<void> fleetJoin(String hubUrl, String username, String password,
       String myName, String myUrl) async {

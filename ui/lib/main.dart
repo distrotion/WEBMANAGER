@@ -365,7 +365,9 @@ class _SitesPageState extends State<SitesPage> {
         icon: const Icon(Icons.add),
         label: const Text('New site'),
       ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(children: [
+        _serverBar(),
+        Expanded(child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -394,8 +396,46 @@ class _SitesPageState extends State<SitesPage> {
             _siteList(context, web, 'No nginx sites yet — create a static site.'),
           ]);
         },
-      ),
+      )),
+      ]),
     ),
+    );
+  }
+
+  // Horizontal server chips (hub mode): pick which child server the whole app
+  // views/controls. Hidden when this server has no fleet children.
+  Widget _serverBar() {
+    if (_fleetServers.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      color: Colors.black.withValues(alpha: 0.15),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          ChoiceChip(
+            avatar: Icon(Icons.computer,
+                size: 15, color: !Api.instance.onRemote ? Colors.black : Colors.white54),
+            label: const Text('เครื่องนี้'),
+            selected: !Api.instance.onRemote,
+            selectedColor: Colors.greenAccent,
+            onSelected: (_) => _switchServer(null, ''),
+          ),
+          for (final s in _fleetServers) ...[
+            const SizedBox(width: 8),
+            ChoiceChip(
+              avatar: Icon(Icons.hub,
+                  size: 15,
+                  color: Api.instance.remoteId == s['id'] ? Colors.black : Colors.white54),
+              label: Text('${s['name']}'),
+              tooltip: '${s['url']}',
+              selected: Api.instance.remoteId == s['id'],
+              selectedColor: Colors.amberAccent,
+              onSelected: (_) => _switchServer(s['id'] as int, s['name']),
+            ),
+          ],
+        ]),
+      ),
     );
   }
 

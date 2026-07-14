@@ -139,6 +139,22 @@ router.all(/^\/remotes\/(\d+)\/proxy(\/.*)$/, adminOnly, async (req, res) => {
   }
 });
 
+// rename / re-point a registered child
+router.put('/remotes/:id', adminOnly, (req, res) => {
+  const r = db.prepare('SELECT * FROM remotes WHERE id=?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'unknown remote' });
+  const b = req.body || {};
+  const name = b.name ? String(b.name).trim() : r.name;
+  const url = b.url ? String(b.url).trim().replace(/\/+$/, '') : r.url;
+  try {
+    db.prepare('UPDATE remotes SET name=?, url=? WHERE id=?').run(name, url, r.id);
+    audit(req.user, 'fleet-rename-server', `${r.name} -> ${name}`);
+    res.json({ id: r.id, name, url });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 router.delete('/remotes/:id', adminOnly, (req, res) => {
   const r = db.prepare('SELECT name FROM remotes WHERE id=?').get(req.params.id);
   db.prepare('DELETE FROM remotes WHERE id=?').run(req.params.id);

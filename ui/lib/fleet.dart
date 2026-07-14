@@ -339,6 +339,37 @@ class _FleetPageState extends State<FleetPage> {
     );
   }
 
+  Future<void> _renameServer(Map<String, dynamic> s) async {
+    final name = TextEditingController(text: s['name']);
+    final url = TextEditingController(text: s['url']);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('แก้ไข server ลูก'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: name, decoration: const InputDecoration(labelText: 'ชื่อ')),
+          const SizedBox(height: 8),
+          TextField(controller: url, decoration: const InputDecoration(labelText: 'URL')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Api.instance.renameFleetRemote(s['id'], name.text.trim(), url.text.trim());
+      _remotes = await Api.instance.fleetRemotes();
+      await _pollOverview();
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   Widget _serverTile(Map<String, dynamic> s) {
     final up = s['up'] == true;
     final sites = (s['sites'] as List?)?.cast<Map<String, dynamic>>() ?? [];
@@ -361,6 +392,11 @@ class _FleetPageState extends State<FleetPage> {
           style: TextStyle(fontSize: 12, color: up ? Colors.white54 : Colors.redAccent),
         ),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+            tooltip: 'เปลี่ยนชื่อ / แก้ URL',
+            icon: const Icon(Icons.edit, size: 18),
+            onPressed: () => _renameServer(s),
+          ),
           IconButton(
             tooltip: 'เปิด panel เครื่องนี้',
             icon: const Icon(Icons.open_in_new, size: 18),
