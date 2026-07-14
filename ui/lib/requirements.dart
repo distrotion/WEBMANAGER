@@ -333,10 +333,13 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
             ],
           ]),
           const Divider(height: 26),
-          const Text('Per-host tokens (หลาย account / หลาย git server)',
+          const Text('Per-account tokens (GitHub หลาย user/org, Azure DevOps ฯลฯ)',
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          const Text('token ที่ host ตรงกับ repo URL จะถูกใช้ก่อน · ตัวด้านบนเป็น fallback ทุก host',
-              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          const Text(
+            'ใส่เป็น host/owner เจาะจง user/org ได้ — ตัวที่ตรงยาวสุดถูกใช้ก่อน · ตัวด้านบนเป็น fallback\n'
+            'เช่น  github.com/distrotion  ·  github.com/บริษัท  ·  dev.azure.com/myorg  ·  หรือ host เปล่า github.com',
+            style: TextStyle(fontSize: 11, color: Colors.white54),
+          ),
           const SizedBox(height: 8),
           for (final c in _creds)
             ListTile(
@@ -352,10 +355,10 @@ class _GitCredentialsCardState extends State<GitCredentialsCard> {
             ),
           Row(children: [
             SizedBox(
-              width: 150,
+              width: 220,
               child: TextField(
                 controller: _host,
-                decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'host', hintText: 'github.com'),
+                decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'host / owner', hintText: 'github.com/distrotion'),
               ),
             ),
             const SizedBox(width: 8),

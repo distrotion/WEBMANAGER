@@ -9,18 +9,33 @@ function repoDir(site) {
   return path.join(config.paths.sites, site.name, 'repo');
 }
 
-// Pick the token for a repo URL: a per-host credential whose host matches the
-// URL's host wins; otherwise the legacy single shared token (git_token).
+// Normalize a credential match value or a repo URL to `host/path` (lowercase, no
+// scheme, no trailing slash, no `.git`). GitHub users/orgs share one host, so a
+// credential can be scoped to an owner: 'github.com/distrotion', 'github.com/acme',
+// 'dev.azure.com/myorg', or just a bare host 'github.com' as a catch-all.
+function normKey(s) {
+  let v = String(s || '').trim().toLowerCase();
+  v = v.replace(/^[a-z]+:\/\//, ''); // strip scheme
+  v = v.replace(/^[^@/]+@/, ''); // strip any user@ (ssh-ish)
+  v = v.replace(/\.git$/, '').replace(/\/+$/, '');
+  return v;
+}
+
+// Pick the token for a repo URL: among per-host/owner credentials whose prefix
+// matches the URL, the LONGEST (most specific) wins; else the legacy shared token.
 function tokenFor(url) {
   try {
-    const host = new URL(url).hostname.toLowerCase();
+    const key = normKey(url); // e.g. github.com/distrotion/back-qc
     const db = require('./db');
     const rows = db.prepare('SELECT host, token FROM git_credentials').all();
-    const hit = rows.find((r) => {
-      const h = String(r.host).toLowerCase();
-      return host === h || host.endsWith('.' + h);
-    });
-    if (hit) return hit.token;
+    let best = null;
+    for (const r of rows) {
+      const pfx = normKey(r.host);
+      if (pfx && (key === pfx || key.startsWith(pfx + '/'))) {
+        if (!best || pfx.length > best.len) best = { token: r.token, len: pfx.length };
+      }
+    }
+    if (best) return best.token;
   } catch {
     /* not a parseable URL / no table yet */
   }

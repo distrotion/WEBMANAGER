@@ -40,11 +40,15 @@ router.get('/git-credentials/list', (req, res) => {
 });
 router.post('/git-credentials/list', (req, res) => {
   const b = req.body || {};
-  let host = String(b.host || '').trim().toLowerCase();
+  // Accept a bare host ('github.com'), host+owner ('github.com/distrotion',
+  // 'dev.azure.com/myorg'), or a full repo URL — normalized to 'host/path'.
+  let host = String(b.host || '').trim().toLowerCase()
+    .replace(/^[a-z]+:\/\//, '')
+    .replace(/^[^@/]+@/, '')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '');
   const token = String(b.token || '').trim();
   if (!host || !token) return res.status(400).json({ error: 'host and token required' });
-  // accept a pasted URL and reduce to its hostname
-  try { if (/\//.test(host)) host = new URL(host.includes('://') ? host : 'https://' + host).hostname; } catch { /* keep as typed */ }
   try {
     db.prepare(
       `INSERT INTO git_credentials (name, host, token) VALUES (?,?,?)
