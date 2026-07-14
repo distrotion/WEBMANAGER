@@ -116,6 +116,12 @@ if (Test-Path "$RepoDir\ui\build\web\index.html") {
 
 # 3. backend .env + npm install --------------------------------------------
 Info "writing backend\.env"
+# Stamp the repo's git hash + date so the UI can show which build this server runs.
+$WmVer = 'unknown'
+try {
+  $v = & git -C $RepoDir rev-parse --short HEAD 2>$null
+  if ($LASTEXITCODE -eq 0 -and $v) { $WmVer = "$v".Trim() + " (" + (Get-Date -Format 'yyyy-MM-dd') + ")" }
+} catch {}
 # Built as an array (not a here-string) so it parses under any line ending.
 $envLines = @(
   "WEBMANAGER_ROOT=$Root",
@@ -128,7 +134,8 @@ $envLines = @(
   "NGINX_PREFIX=$Root\nginx",
   "NSSM_EXE=$Root\tools\nssm.exe",
   "WACS_EXE=$Root\tools\win-acme\wacs.exe",
-  "PM2_HOME=$Root\pm2"
+  "PM2_HOME=$Root\pm2",
+  "WM_VERSION=$WmVer"
 )
 Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 

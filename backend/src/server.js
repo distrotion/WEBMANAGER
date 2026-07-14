@@ -37,7 +37,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/health', (req, res) => res.json({ ok: true, root: config.ROOT }));
+app.get('/api/health', (req, res) =>
+  res.json({ ok: true, root: config.ROOT, version: require('./version') })
+);
 
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/users', authMiddleware, require('./routes/users.routes'));

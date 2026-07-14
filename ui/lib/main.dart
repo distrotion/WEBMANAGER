@@ -158,6 +158,7 @@ class _SitesPageState extends State<SitesPage> {
   // Live PM2 metrics keyed by site name (from /pm2/overview), polled every 3s.
   Map<String, Map<String, dynamic>> _overview = {};
   Timer? _monitTimer;
+  String _version = '';
 
   @override
   void initState() {
@@ -165,6 +166,9 @@ class _SitesPageState extends State<SitesPage> {
     _reload();
     _pollOverview();
     _monitTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollOverview());
+    Api.instance.serverVersion().then((v) {
+      if (mounted) setState(() => _version = v);
+    });
   }
 
   @override
@@ -209,7 +213,15 @@ class _SitesPageState extends State<SitesPage> {
       length: 3,
       child: Scaffold(
       appBar: AppBar(
-        title: const Text('WEBMANAGER'),
+        title: Row(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+          const Text('WEBMANAGER'),
+          if (_version.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 3),
+              child: Text(_version,
+                  style: const TextStyle(fontSize: 11, color: Colors.white38)),
+            ),
+        ]),
         bottom: const TabBar(tabs: [
           Tab(icon: Icon(Icons.dns, size: 18), text: 'PM2 apps'),
           Tab(icon: Icon(Icons.account_tree, size: 18), text: 'Node-RED'),

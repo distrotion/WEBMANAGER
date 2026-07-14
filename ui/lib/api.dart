@@ -106,6 +106,17 @@ class Api {
     await prefs.remove(_kUserInfo);
   }
 
+  /// Backend build version (git hash stamped at install) — for "อัพรึยัง" checks.
+  Future<String> serverVersion() async {
+    try {
+      final r = await http.get(_u('/api/health'));
+      if (r.statusCode != 200) return '';
+      return jsonDecode(r.body)['version']?.toString() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   Future<Map<String, dynamic>> requirements() async {
     final r = await http.get(_u('/api/system/requirements'), headers: _headers);
     if (r.statusCode != 200) throw Exception('requirements failed: ${r.statusCode}');
