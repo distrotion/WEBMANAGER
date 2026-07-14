@@ -135,6 +135,17 @@ WebSocket, and TLS transparently (no path rewrite; the target handles its own au
 - Example: `Line-B HMI · :8080 → 172.23.10.50:3012` — browse `http://<server>:8080` to
   reach serverB's HMI through this manager.
 
+**Scripting from another machine** — the gateway API also accepts an **`x-api-token`**
+(generate it on the Remote Gateway page). Loopback (127.0.0.1) needs no token; the UI
+uses your login. Example:
+
+```bash
+TOKEN=gwt_...   # from the Remote Gateway page
+curl -s -X POST http://<server>:8088/api/gateways \
+  -H "x-api-token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Line-B HMI","dest_host":"172.23.10.50","dest_port":3012,"listen_port":8080}'
+```
+
 ## Fleet — one hub, many servers (แม่/ลูก)
 
 **Account menu → Fleet** (admin). Set each server's role:

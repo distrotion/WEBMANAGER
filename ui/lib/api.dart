@@ -254,6 +254,22 @@ class Api {
     await http.delete(_u('/api/gateways/$id'), headers: _headers);
   }
 
+  Future<bool> gatewayHasToken() async {
+    final r = await http.get(_u('/api/gateways/token'), headers: _headers);
+    if (r.statusCode != 200) return false;
+    return jsonDecode(r.body)['hasToken'] == true;
+  }
+
+  Future<String> genGatewayToken() async {
+    final r = await http.post(_u('/api/gateways/token'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'token failed');
+    return jsonDecode(r.body)['token'] as String;
+  }
+
+  Future<void> revokeGatewayToken() async {
+    await http.delete(_u('/api/gateways/token'), headers: _headers);
+  }
+
   /// Who holds a port: [{pid, name, proto}] (admin).
   Future<List<Map<String, dynamic>>> portInfo(int port) async {
     final r = await http.get(_u('/api/system/port/$port'), headers: _headers);

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'api.dart';
 
 /// Remote Gateway: raw-TCP port forwarders. This server opens a listen port and
@@ -13,12 +14,17 @@ class GatewayPage extends StatefulWidget {
 class _GatewayPageState extends State<GatewayPage> {
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
+  bool _hasToken = false;
+  String? _freshToken;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    Api.instance.gatewayHasToken().then((v) {
+      if (mounted) setState(() => _hasToken = v);
+    });
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _load(silent: true));
   }
 
@@ -55,6 +61,65 @@ class _GatewayPageState extends State<GatewayPage> {
     if (ok == true) _load();
   }
 
+  // API-token card: lets scripts on other machines drive gateways with
+  // `x-api-token: <token>` (loopback needs no token).
+  Widget _tokenCard() {
+    return Card(
+      color: Colors.white.withValues(alpha: 0.03),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.vpn_key, size: 16),
+            const SizedBox(width: 6),
+            const Text('API token (สั่งจาก CLI/เครื่องอื่น)',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Text(_hasToken ? 'มี token อยู่' : 'ยังไม่มี',
+                style: const TextStyle(fontSize: 11, color: Colors.white54)),
+          ]),
+          const SizedBox(height: 6),
+          const Text('ส่ง header  x-api-token: <token>  (loopback 127.0.0.1 ไม่ต้องใช้ token)',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          if (_freshToken != null) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                  child: SelectableText(_freshToken!,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 16),
+                onPressed: () => Clipboard.setData(ClipboardData(text: _freshToken!)),
+              ),
+            ]),
+            const Text('copy เก็บไว้เลย — ปิดหน้าแล้วไม่โชว์ซ้ำ',
+                style: TextStyle(fontSize: 11, color: Colors.orangeAccent)),
+          ],
+          const SizedBox(height: 8),
+          Row(children: [
+            FilledButton.tonalIcon(
+              onPressed: () async {
+                final t = await Api.instance.genGatewayToken();
+                setState(() { _freshToken = t; _hasToken = true; });
+              },
+              icon: const Icon(Icons.key, size: 15),
+              label: Text(_hasToken ? 'สร้างใหม่ (rotate)' : 'สร้าง token'),
+            ),
+            const SizedBox(width: 8),
+            if (_hasToken)
+              OutlinedButton(
+                onPressed: () async {
+                  await Api.instance.revokeGatewayToken();
+                  setState(() { _hasToken = false; _freshToken = null; });
+                },
+                child: const Text('เพิกถอน'),
+              ),
+          ]),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -68,22 +133,13 @@ class _GatewayPageState extends State<GatewayPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _rows.isEmpty
-              ? const Center(
-                  child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'ยังไม่มี forward — กด New forward เพื่อเปิด tunnel TCP\n(เครื่องนี้เปิด listen port → ส่งต่อไป host:port ปลายทาง)',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                ))
-              : ListView.separated(
+          : ListView.separated(
                   padding: const EdgeInsets.all(12),
-                  itemCount: _rows.length,
+                  itemCount: _rows.length + 1,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (_, i) {
-                    final g = _rows[i];
+                    if (i == 0) return _tokenCard();
+                    final g = _rows[i - 1];
                     final status = g['status'] as String;
                     return Card(
                       child: ListTile(

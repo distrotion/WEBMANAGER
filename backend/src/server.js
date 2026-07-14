@@ -50,7 +50,8 @@ app.use('/api/logs', authMiddleware, require('./routes/logs.routes'));
 app.use('/api/audit', authMiddleware, require('./routes/audit.routes'));
 app.use('/api/system', authMiddleware, require('./routes/system.routes'));
 app.use('/api/fleet', authMiddleware, require('./routes/fleet.routes'));
-app.use('/api/gateways', authMiddleware, require('./routes/gateway.routes'));
+// gateway routes do their own auth (loopback / x-api-token / admin login)
+app.use('/api/gateways', require('./routes/gateway.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));

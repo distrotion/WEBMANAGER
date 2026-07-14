@@ -1,13 +1,71 @@
 'use strict';
+const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
 const gateway = require('../gateway');
 const firewall = require('../firewall');
+const settings = require('../settings');
 const { audit } = require('../audit');
+const { verifyAnyToken } = require('../auth');
 
 const router = express.Router();
+
+function isLoopback(req) {
+  const ip = req.socket.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+// Gateway API auth (per the Remote Gateway spec): accept any of
+//   1. loopback (127.0.0.1) — no token needed
+//   2. header `x-api-token: <token>`  (or `Authorization: Bearer <token>`)
+//   3. an admin login JWT / fleet token — so the UI and hub proxy keep working
+// The api-token lets scripts on other machines drive gateways without a login.
+function gatewayAuth(req, res, next) {
+  if (isLoopback(req)) {
+    req.user = { username: 'loopback', role: 'admin' };
+    return next();
+  }
+  const apiTok = settings.get('gateway_api_token');
+  const h = req.headers.authorization || '';
+  const bearer = h.startsWith('Bearer ') ? h.slice(7) : null;
+  const provided = req.headers['x-api-token'] || bearer;
+  if (apiTok && provided === apiTok) {
+    req.user = { username: 'api-token', role: 'admin' };
+    return next();
+  }
+  const payload = bearer && verifyAnyToken(bearer);
+  if (payload && payload.role === 'admin') {
+    req.user = payload;
+    return next();
+  }
+  return res.status(401).json({ error: 'unauthorized: need x-api-token or admin login' });
+}
+router.use(gatewayAuth);
+
 const adminOnly = (req, res, next) =>
   req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
+
+// ---- API token management (view/generate/revoke) — real login only ----
+// Guarded so a leaked api-token can't rotate itself: loopback or a JWT/fleet
+// login, but NOT the api-token identity.
+function tokenAdmin(req, res, next) {
+  if (req.user && req.user.username !== 'api-token') return next();
+  return res.status(403).json({ error: 'manage the token from a logged-in session' });
+}
+router.get('/token', adminOnly, tokenAdmin, (req, res) =>
+  res.json({ hasToken: !!settings.get('gateway_api_token') })
+);
+router.post('/token', adminOnly, tokenAdmin, (req, res) => {
+  const token = 'gwt_' + crypto.randomBytes(24).toString('hex');
+  settings.set('gateway_api_token', token);
+  audit(req.user, 'gateway-token', 'generate');
+  res.json({ token });
+});
+router.delete('/token', adminOnly, tokenAdmin, (req, res) => {
+  settings.del('gateway_api_token');
+  audit(req.user, 'gateway-token', 'revoke');
+  res.json({ ok: true });
+});
 
 const view = (g) => ({
   id: g.id,
