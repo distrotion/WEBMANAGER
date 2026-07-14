@@ -70,6 +70,19 @@ CREATE TABLE IF NOT EXISTS remotes (
   token TEXT NOT NULL             -- that server's fleet service token
 );
 
+CREATE TABLE IF NOT EXISTS gateways (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  listen_port INTEGER UNIQUE NOT NULL,   -- port this server opens
+  dest_host   TEXT NOT NULL,             -- forward target host
+  dest_port   INTEGER NOT NULL,          -- forward target port
+  bind_host   TEXT NOT NULL DEFAULT '0.0.0.0',
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  max_conns   INTEGER NOT NULL DEFAULT 0,-- 0 = unlimited
+  expires_at  INTEGER,                   -- epoch ms; null = never
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS logs (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT NOT NULL,           -- site-<id> | system

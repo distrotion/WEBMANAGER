@@ -33,6 +33,9 @@ require('./pm2').ensureUp().catch(() => {});
 // CI/CD: poll git remotes and auto-deploy sites that have autodeploy enabled.
 require('./autodeploy').start();
 
+// Remote Gateway: open raw-TCP forwarders for enabled gateways.
+require('./gateway').start();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -47,6 +50,7 @@ app.use('/api/logs', authMiddleware, require('./routes/logs.routes'));
 app.use('/api/audit', authMiddleware, require('./routes/audit.routes'));
 app.use('/api/system', authMiddleware, require('./routes/system.routes'));
 app.use('/api/fleet', authMiddleware, require('./routes/fleet.routes'));
+app.use('/api/gateways', authMiddleware, require('./routes/gateway.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));

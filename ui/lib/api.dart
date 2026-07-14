@@ -233,6 +233,27 @@ class Api {
         headers: _headers, body: jsonEncode({'url': url}));
   }
 
+  // ---- Remote Gateway (raw-TCP port forward) ----
+  Future<List<Map<String, dynamic>>> gateways() async {
+    final r = await http.get(_u('/api/gateways'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('gateways failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createGateway(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/gateways'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateGateway(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/gateways/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteGateway(int id) async {
+    await http.delete(_u('/api/gateways/$id'), headers: _headers);
+  }
+
   /// Who holds a port: [{pid, name, proto}] (admin).
   Future<List<Map<String, dynamic>>> portInfo(int port) async {
     final r = await http.get(_u('/api/system/port/$port'), headers: _headers);
