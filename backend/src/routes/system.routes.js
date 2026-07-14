@@ -57,4 +57,26 @@ router.post('/nginx/:action', (req, res) => {
   fn('system').catch((e) => require('../logbus').emitLog('system', `[fatal] ${e.message}`));
 });
 
+// ---- port tools (admin): who holds a port / kill it ----
+const adminOnly = (req, res, next) =>
+  req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
+
+router.get('/port/:port', adminOnly, async (req, res) => {
+  const port = parseInt(req.params.port, 10);
+  if (!port || port < 1 || port > 65535) return res.status(400).json({ error: 'bad port' });
+  res.json(await require('../ports').whoOnPort(port));
+});
+
+router.post('/killport', adminOnly, async (req, res) => {
+  const port = parseInt(req.body && req.body.port, 10);
+  if (!port || port < 1 || port > 65535) return res.status(400).json({ error: 'bad port' });
+  if (port === config.PORT) {
+    return res.status(400).json({ error: `port ${port} is webmanager itself - restart the service instead` });
+  }
+  const results = await require('../ports').killPort(port);
+  require('../audit').audit(req.user, 'kill-port', String(port),
+    results.map((r) => `${r.name || ''}(${r.pid})${r.killed ? '' : ' FAILED'}`).join(', '));
+  res.json(results);
+});
+
 module.exports = router;

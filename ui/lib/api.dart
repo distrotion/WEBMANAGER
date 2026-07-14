@@ -233,6 +233,21 @@ class Api {
         headers: _headers, body: jsonEncode({'url': url}));
   }
 
+  /// Who holds a port: [{pid, name, proto}] (admin).
+  Future<List<Map<String, dynamic>>> portInfo(int port) async {
+    final r = await http.get(_u('/api/system/port/$port'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'port info failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  /// Kill everything on a port (admin). Returns per-process results.
+  Future<List<Map<String, dynamic>>> killPort(int port) async {
+    final r = await http.post(_u('/api/system/killport'),
+        headers: _headers, body: jsonEncode({'port': port}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'kill failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
   Future<Map<String, dynamic>> browse(String? path) async {
     final q = path == null ? '' : '?path=${Uri.encodeQueryComponent(path)}';
     final r = await http.get(_u('/api/system/browse$q'), headers: _headers);

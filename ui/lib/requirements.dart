@@ -51,6 +51,10 @@ class _RequirementsPageState extends State<RequirementsPage> {
               const SizedBox(height: 16),
               const LogSettingsCard(),
               const SizedBox(height: 16),
+              if (Api.instance.isAdmin) ...[
+                const PortToolsCard(),
+                const SizedBox(height: 16),
+              ],
               _nginxControl(),
               const SizedBox(height: 24),
               _steps(),
@@ -433,6 +437,122 @@ class _LogSettingsCardState extends State<LogSettingsCard> {
               ),
               if (_msg != null) Text(_msg!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
             ]),
+        ]),
+      ),
+    );
+  }
+}
+
+// ---- Port tools: who holds a port / kill it (admin) ----
+class PortToolsCard extends StatefulWidget {
+  const PortToolsCard({super.key});
+  @override
+  State<PortToolsCard> createState() => _PortToolsCardState();
+}
+
+class _PortToolsCardState extends State<PortToolsCard> {
+  final _port = TextEditingController();
+  List<Map<String, dynamic>>? _procs;
+  bool _busy = false;
+  String? _msg;
+
+  int? get _portNum => int.tryParse(_port.text.trim());
+
+  Future<void> _check() async {
+    if (_portNum == null) return;
+    setState(() { _busy = true; _msg = null; });
+    try {
+      _procs = await Api.instance.portInfo(_portNum!);
+      if (_procs!.isEmpty) _msg = 'ไม่มี process ถือ port นี้';
+    } catch (e) {
+      _msg = '$e';
+      _procs = null;
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _kill() async {
+    if (_portNum == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Kill port ${_portNum!}?'),
+        content: Text(
+          _procs == null || _procs!.isEmpty
+              ? 'จะ kill ทุก process ที่ถือ port นี้'
+              : 'จะ kill: ${_procs!.map((p) => "${p['name']}(${p['pid']})").join(', ')}\n\n'
+                'หมายเหตุ: ถ้าเป็นแอปที่ PM2 ดูแล (wm-*) มันจะฟื้นเอง — ใช้ปุ่ม Stop ของ site แทน',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Kill'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() { _busy = true; _msg = null; });
+    try {
+      final r = await Api.instance.killPort(_portNum!);
+      _msg = r.isEmpty
+          ? 'ไม่มี process ให้ kill'
+          : r.map((p) => '${p['name']}(${p['pid']}): ${p['killed'] == true ? 'killed ✓' : 'FAILED ${p['reason'] ?? ''}'}').join('\n');
+      _procs = null;
+    } catch (e) {
+      _msg = '$e';
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Port tools (ดู/kill process ที่ถือ port)',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          Row(children: [
+            SizedBox(
+              width: 140,
+              child: TextField(
+                controller: _port,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Port', hintText: '1880', isDense: true),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _check,
+              icon: const Icon(Icons.search, size: 16),
+              label: const Text('ใครถืออยู่'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+              onPressed: _busy ? null : _kill,
+              icon: const Icon(Icons.dangerous, size: 16),
+              label: const Text('Kill port'),
+            ),
+            if (_busy) const Padding(
+              padding: EdgeInsets.only(left: 10),
+              child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+          ]),
+          if (_procs != null && _procs!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final p in _procs!)
+              Text('• ${p['name']}  (PID ${p['pid']}${(p['proto'] ?? '').toString().isNotEmpty ? ' · ${p['proto']}' : ''})',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+          ],
+          if (_msg != null) ...[
+            const SizedBox(height: 8),
+            Text(_msg!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+          ],
         ]),
       ),
     );
