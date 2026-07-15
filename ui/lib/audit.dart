@@ -97,7 +97,7 @@ class _AuditPageState extends State<AuditPage> {
         onPressed: () async {
           final rows = await Api.instance.audit(limit: 5000);
           final text = rows
-              .map((r) => '${r['time']}\t${r['who']}\t${r['action']}\t${r['target'] ?? ''}\t${r['detail'] ?? ''}')
+              .map((r) => '${localTime(r['time'])}\t${r['who']}\t${r['action']}\t${r['target'] ?? ''}\t${r['detail'] ?? ''}')
               .join('\n');
           downloadText('audit.tsv', text);
         },

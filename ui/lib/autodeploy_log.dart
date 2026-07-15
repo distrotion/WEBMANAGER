@@ -92,7 +92,7 @@ class _AutoDeployLogPageState extends State<AutoDeployLogPage> {
         onPressed: () async {
           final rows = await Api.instance.autodeployLog(limit: 5000);
           final text = rows
-              .map((r) => '${r['ts']}\t${r['site_name']}\t${r['from_commit'] ?? ''}\t${r['to_commit'] ?? ''}\t${(r['ok'] == 1) ? 'ok' : 'fail'}\t${r['message'] ?? ''}')
+              .map((r) => '${localTime(r['ts'])}\t${r['site_name']}\t${r['from_commit'] ?? ''}\t${r['to_commit'] ?? ''}\t${(r['ok'] == 1) ? 'ok' : 'fail'}\t${r['message'] ?? ''}')
               .join('\n');
           downloadText('autodeploy.tsv', text);
         },

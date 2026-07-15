@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'timefmt.dart';
 import 'api.dart';
 
 /// Admin-only page to manage login accounts (add / delete / reset password / role).
@@ -124,7 +125,7 @@ class _UsersPageState extends State<UsersPage> {
                         child: Text('(you)', style: TextStyle(fontSize: 11, color: Colors.white54)),
                       ),
                   ]),
-                  subtitle: Text('${u['role']} · created ${u['created_at'] ?? ''}'),
+                  subtitle: Text('${u['role']} · created ${localTime(u['created_at'])}'),
                   trailing: PopupMenuButton<String>(
                     onSelected: (v) {
                       if (v == 'pw') _resetPw(u);
