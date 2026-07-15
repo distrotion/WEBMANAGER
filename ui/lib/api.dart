@@ -229,6 +229,12 @@ class Api {
     await http.post(_u('/api/system/https/disable'), headers: _headers);
   }
 
+  /// Re-mint the server cert (keeps the same CA — no need to re-install it).
+  Future<void> httpsRegenerate() async {
+    final r = await http.post(_u('/api/system/https/regenerate'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'regenerate failed');
+  }
+
   /// Absolute URL of the downloadable local-CA cert (public, no auth needed).
   String get caCertUrl => '$_base/panel-ca.crt';
 

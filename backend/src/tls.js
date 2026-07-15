@@ -79,12 +79,17 @@ function makeServerCert() {
   const now = new Date();
   cert.validity.notBefore = new Date(now.getTime() - 86400000);
   cert.validity.notAfter = new Date(now.getFullYear() + 5, now.getMonth(), now.getDate());
-  cert.setSubject([{ name: 'commonName', value: os.hostname() }]);
-  cert.setIssuer(ca.cert.subject.attributes);
-  const altNames = [
-    { type: 2, value: 'localhost' },
-    { type: 2, value: os.hostname() },
-  ];
+  // Encode names as UTF8String — the default PrintableString rejects chars like
+  // '_' (common in Windows hostnames, e.g. THAIPARKER_QC_SYSTEM), producing a
+  // malformed cert that strict parsers (Chrome/BoringSSL) refuse with
+  // ERR_SSL_SERVER_CERT_BAD_FORMAT even though OpenSSL/curl accept it.
+  const U = forge.asn1.Type.UTF8;
+  cert.setSubject([{ name: 'commonName', value: os.hostname(), valueTagClass: U }]);
+  cert.setIssuer(ca.cert.subject.attributes.map((a) => ({ ...a, valueTagClass: U })));
+  const altNames = [{ type: 2, value: 'localhost' }];
+  // dNSName is IA5String (allows '_'); include the hostname only if it has no
+  // whitespace, then all IPs.
+  if (os.hostname() && !/\s/.test(os.hostname())) altNames.push({ type: 2, value: os.hostname() });
   for (const ip of localIps()) altNames.push({ type: 7, ip });
   cert.setExtensions([
     { name: 'basicConstraints', cA: false },

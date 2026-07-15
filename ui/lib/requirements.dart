@@ -718,11 +718,30 @@ class _HttpsCardState extends State<HttpsCard> {
                   style: TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () => launchUrl(Uri.parse(Api.instance.caCertUrl), webOnlyWindowName: '_blank'),
-                  icon: const Icon(Icons.download, size: 16),
-                  label: const Text('Download CA cert'),
-                ),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(Uri.parse(Api.instance.caCertUrl), webOnlyWindowName: '_blank'),
+                    icon: const Icon(Icons.download, size: 16),
+                    label: const Text('Download CA cert'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      try {
+                        await Api.instance.httpsRegenerate();
+                        await _load();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('สร้าง cert ใหม่แล้ว — hard refresh หน้าเว็บ (CA เดิมใช้ได้ต่อ)')),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                      }
+                    },
+                    icon: const Icon(Icons.autorenew, size: 16),
+                    label: const Text('สร้าง cert ใหม่'),
+                  ),
+                ]),
               ]),
             ),
           ],
