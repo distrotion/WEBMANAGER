@@ -177,11 +177,20 @@ function startArgs(site) {
   return args;
 }
 
+// Node-RED reads its config from a generated settings.js. `pm2 restart`/resume
+// reuse whatever file is on disk, so regenerate it first on every (re)start —
+// otherwise a manager code update to the settings template never takes effect
+// until the PM2 app is deleted. Cheap; safe for a running app.
+function reprovision(site, channel) {
+  if (site.runtime === 'nodered') services.provisionNodeRed(site);
+}
+
 async function start(site, channel) {
   // First Node-RED start on a fresh machine: install the shared runtime.
   if (site.runtime === 'nodered' && !(await services.ensureNodeRedRuntime(channel))) {
     return { code: -1, error: 'node-red install failed' };
   }
+  reprovision(site, channel);
   const env = envFor(site);
   const svc = serviceName(site);
   // If PM2 already knows this app (e.g. it was stopped), resume it by name —
@@ -201,6 +210,7 @@ async function start(site, channel) {
 // Falls back to start on first run.
 async function restart(site, channel) {
   const svc = serviceName(site);
+  reprovision(site, channel); // refresh settings.js (Node-RED) before restart
   const env = envFor(site);
   emitLog(channel, `[pm2] restart ${svc}`);
   const r = await pm2(['restart', svc, '--update-env'], { channel, env });
