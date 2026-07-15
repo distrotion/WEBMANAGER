@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="116" fill="#17427A"/>
-  <rect x="120" y="137" width="272" height="58" rx="14" fill="#EEF4FF"/>
-  <circle cx="151" cy="166" r="9" fill="#37C98D"/>
-  <rect x="284" y="160" width="78" height="12" rx="6" fill="#B9CBE6"/>
-  <rect x="120" y="227" width="272" height="58" rx="14" fill="#EEF4FF"/>
-  <circle cx="151" cy="256" r="9" fill="#6FA8E6"/>
-  <rect x="284" y="250" width="78" height="12" rx="6" fill="#B9CBE6"/>
-  <rect x="120" y="317" width="272" height="58" rx="14" fill="#EEF4FF"/>
-  <circle cx="151" cy="346" r="9" fill="#6FA8E6"/>
-  <rect x="284" y="340" width="78" height="12" rx="6" fill="#B9CBE6"/>
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1E518C"/><stop offset="1" stop-color="#0B2749"/></linearGradient></defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect x="152" y="316" width="208" height="58" rx="15" fill="#B9CCE6"/>
+  <circle cx="188" cy="345" r="13" fill="#2FD27B"/>
+  <rect x="132" y="236" width="248" height="60" rx="16" fill="#DCE8F7"/>
+  <circle cx="168" cy="266" r="14" fill="#2FD27B"/>
+  <rect x="230" y="258" width="118" height="15" rx="7" fill="#9FB6D6"/>
+  <rect x="112" y="152" width="288" height="64" rx="18" fill="#F4F8FF"/>
+  <circle cx="150" cy="184" r="15" fill="#2FD27B"/>
+  <text x="324" y="201" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="47" letter-spacing="-2" fill="#17427A">WM</text>
 </svg>
