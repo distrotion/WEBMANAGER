@@ -23,6 +23,14 @@ router.put('/settings', (req, res) => {
   });
 });
 
+// Auto-deploy history — when the git watcher pulled + deployed each site.
+router.get('/autodeploy', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 500, 5000);
+  res.json(
+    db.prepare('SELECT * FROM autodeploy_log ORDER BY id DESC LIMIT ?').all(limit)
+  );
+});
+
 // Delete logs older than N months now (defaults to the configured retention).
 router.post('/prune', (req, res) => {
   const months = (req.body && req.body.months) || logprune.retentionMonths();

@@ -12,6 +12,7 @@ import 'audit.dart';
 import 'download.dart';
 import 'fleet.dart';
 import 'gateway.dart';
+import 'autodeploy_log.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
 // so a backgrounded panel costs the server (almost) nothing.
@@ -331,6 +332,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AuditPage()));
+              } else if (v == 'autodeploy') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AutoDeployLogPage()));
               } else if (v == 'password') {
                 await showDialog(context: context, builder: (_) => const _ChangePasswordDialog());
               } else if (v == 'logout') {
@@ -359,6 +362,8 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'audit', child: ListTile(leading: Icon(Icons.history), title: Text('Audit log'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'autodeploy', child: ListTile(leading: Icon(Icons.sync), title: Text('Auto-deploy log'), dense: true)),
               const PopupMenuItem(value: 'password', child: ListTile(leading: Icon(Icons.password), title: Text('Change password'), dense: true)),
               const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout), title: Text('Logout'), dense: true)),
             ],

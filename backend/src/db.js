@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS gateways (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS autodeploy_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_id     INTEGER,
+  site_name   TEXT,
+  from_commit TEXT,
+  to_commit   TEXT,
+  ok          INTEGER NOT NULL DEFAULT 1,
+  message     TEXT,
+  ts          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_autodeploy_ts ON autodeploy_log(ts);
+
 CREATE TABLE IF NOT EXISTS logs (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT NOT NULL,           -- site-<id> | system

@@ -18,11 +18,14 @@ function setAutoPrune(on) {
   settings.set('log_autoprune', on ? '1' : '0');
 }
 
-// Delete logs older than `months`. Returns how many rows were removed.
+// Delete logs older than `months` — from both the console logs and the
+// auto-deploy history (same retention covers both). Returns rows removed.
 function pruneOlderThan(months) {
   const m = Math.max(1, parseInt(months, 10) || retentionMonths());
-  const info = db.prepare("DELETE FROM logs WHERE ts < datetime('now', ?)").run(`-${m} months`);
-  return info.changes;
+  const cutoff = `-${m} months`;
+  const a = db.prepare("DELETE FROM logs WHERE ts < datetime('now', ?)").run(cutoff);
+  const b = db.prepare("DELETE FROM autodeploy_log WHERE ts < datetime('now', ?)").run(cutoff);
+  return a.changes + b.changes;
 }
 
 // Ran on a timer: prune to the configured retention if auto-prune is on.

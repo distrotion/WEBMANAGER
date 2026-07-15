@@ -45,14 +45,29 @@ async function checkOne(site) {
   if (sameCommit(remote, site.last_commit)) return; // up to date
   inFlight.add(site.id);
   emitLog(channel, `[auto-deploy] new commit ${remote.slice(0, 8)} (deployed ${site.last_commit || 'none'}) — deploying`);
+  let ok = true;
+  let message = '';
   try {
     const user = { username: 'auto-deploy' };
-    if (site.runtime === 'static') await deploy.deployStatic(site, user);
-    else await deploy.deployNode(site, user);
+    const r = site.runtime === 'static'
+      ? await deploy.deployStatic(site, user)
+      : await deploy.deployNode(site, user);
+    ok = !!(r && r.ok);
+    if (!ok) message = `deploy failed at step ${r && r.step ? r.step : '?'}`;
   } catch (e) {
+    ok = false;
+    message = e.message;
     emitLog(channel, `[auto-deploy] failed: ${e.message}`);
   } finally {
     inFlight.delete(site.id);
+    try {
+      db.prepare(
+        `INSERT INTO autodeploy_log (site_id, site_name, from_commit, to_commit, ok, message)
+         VALUES (?,?,?,?,?,?)`
+      ).run(site.id, site.name, site.last_commit || null, remote.slice(0, 8), ok ? 1 : 0, message || null);
+    } catch {
+      /* logging must never break the watcher */
+    }
   }
 }
 

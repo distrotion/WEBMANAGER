@@ -497,6 +497,13 @@ class Api {
     return r.body;
   }
 
+  /// Auto-deploy history: [{site_name, from_commit, to_commit, ok, message, ts}].
+  Future<List<Map<String, dynamic>>> autodeployLog({int limit = 1000}) async {
+    final r = await http.get(_u('/api/logs/autodeploy?limit=$limit'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('autodeploy log failed: ${r.statusCode}');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
   /// Audit trail (admin): who did what, when.
   Future<List<Map<String, dynamic>>> audit({int limit = 300}) async {
     final r = await http.get(_u('/api/audit?limit=$limit'), headers: _headers);
