@@ -1,11 +1,11 @@
 {
-    "name": "webmanager_ui",
-    "short_name": "webmanager_ui",
+    "name": "WEBMANAGER",
+    "short_name": "WEBMANAGER",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B1020",
+    "theme_color": "#17427A",
+    "description": "Deploy and manage web apps, PM2, Node-RED and gateways behind nginx.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
