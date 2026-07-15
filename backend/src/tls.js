@@ -23,6 +23,7 @@ const HTTPS_PORT = parseInt(process.env.WM_HTTPS_PORT || '8443', 10);
 let server = null;
 let _app = null;
 let _onUpgrade = null;
+const sockets = new Set(); // track live sockets so "off" drops them immediately
 
 function caCertPath() {
   return CA_CERT;
@@ -108,6 +109,10 @@ function start() {
   if (!fs.existsSync(SRV_CERT) || !fs.existsSync(SRV_KEY)) makeServerCert();
   const opts = { key: fs.readFileSync(SRV_KEY), cert: fs.readFileSync(SRV_CERT) };
   server = https.createServer(opts, _app);
+  server.on('connection', (s) => {
+    sockets.add(s);
+    s.on('close', () => sockets.delete(s));
+  });
   if (_onUpgrade) server.on('upgrade', _onUpgrade);
   server.on('error', (e) => {
     emitLog('system', `[https] listen error: ${e.message}`);
@@ -123,9 +128,20 @@ function stop() {
   if (server) {
     try {
       server.close();
+      if (server.closeAllConnections) server.closeAllConnections();
     } catch {
       /* ignore */
     }
+    // close() only stops NEW connections; destroy live keep-alive sockets too so
+    // an already-open browser tab is dropped the moment HTTPS is turned off.
+    for (const s of sockets) {
+      try {
+        s.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    sockets.clear();
     server = null;
   }
   settings.set('https_enabled', '0');
