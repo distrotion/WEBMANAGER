@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'download.dart';
+import 'timefmt.dart';
 
 /// History of automatic (CI/CD) deploys — when the git watcher pulled + deployed
 /// each site. Kept in the DB and pruned by the same log-retention setting.
@@ -79,7 +80,7 @@ class _AutoDeployLogPageState extends State<AutoDeployLogPage> {
                     subtitle: (r['message'] != null && '${r['message']}'.isNotEmpty)
                         ? Text('${r['message']}', style: const TextStyle(color: Colors.redAccent, fontSize: 12))
                         : Text(ok ? 'pulled & deployed' : 'failed', style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                    trailing: Text('${r['ts']}', style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                    trailing: Text(localTime(r['ts']), style: const TextStyle(fontSize: 11, color: Colors.white54)),
                   );
                 },
               );

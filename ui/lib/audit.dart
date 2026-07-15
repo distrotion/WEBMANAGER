@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'download.dart';
+import 'timefmt.dart';
 
 /// Admin-only audit trail: who did what, when (create/deploy/toggle/ssl/users...).
 class AuditPage extends StatefulWidget {
@@ -84,7 +85,7 @@ class _AuditPageState extends State<AuditPage> {
                       'by ${r['who']}',
                       if (r['detail'] != null && '${r['detail']}'.isNotEmpty) 'detail: ${r['detail']}',
                     ].join('   ')),
-                    trailing: Text('${r['time']}', style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                    trailing: Text(localTime(r['time']), style: const TextStyle(fontSize: 11, color: Colors.white54)),
                   );
                 },
               );
