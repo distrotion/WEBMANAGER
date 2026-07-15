@@ -112,4 +112,24 @@ router.post('/killport', adminOnly, async (req, res) => {
   res.json(results);
 });
 
+// ---- HTTPS panel (local CA) — admin ----
+router.get('/https', adminOnly, (req, res) => res.json(require('../tls').status()));
+router.post('/https/enable', adminOnly, (req, res) => {
+  const tls = require('../tls');
+  const st = tls.start();
+  require('../audit').audit(req.user, 'https-enable', `:${st.port}`);
+  res.json(st);
+});
+router.post('/https/disable', adminOnly, (req, res) => {
+  const tls = require('../tls');
+  const st = tls.stop();
+  require('../audit').audit(req.user, 'https-disable');
+  res.json(st);
+});
+router.post('/https/regenerate', adminOnly, (req, res) => {
+  const st = require('../tls').regenerate();
+  require('../audit').audit(req.user, 'https-regen-cert');
+  res.json(st);
+});
+
 module.exports = router;

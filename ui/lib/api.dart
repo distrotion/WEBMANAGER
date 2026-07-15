@@ -212,6 +212,26 @@ class Api {
     await http.post(_u('/api/system/nginx/$action'), headers: _headers);
   }
 
+  // ---- HTTPS panel (local CA) ----
+  Future<Map<String, dynamic>> httpsStatus() async {
+    final r = await http.get(_u('/api/system/https'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('https status failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> httpsEnable() async {
+    final r = await http.post(_u('/api/system/https/enable'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'enable failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> httpsDisable() async {
+    await http.post(_u('/api/system/https/disable'), headers: _headers);
+  }
+
+  /// Absolute URL of the downloadable local-CA cert (public, no auth needed).
+  String get caCertUrl => '$_base/panel-ca.crt';
+
   Future<bool> gitHasToken() async {
     final r = await http.get(_u('/api/system/git-credentials'), headers: _headers);
     if (r.statusCode != 200) return false;

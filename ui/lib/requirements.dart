@@ -52,6 +52,8 @@ class _RequirementsPageState extends State<RequirementsPage> {
               const LogSettingsCard(),
               const SizedBox(height: 16),
               if (Api.instance.isAdmin) ...[
+                const HttpsCard(),
+                const SizedBox(height: 16),
                 const PortToolsCard(),
                 const SizedBox(height: 16),
               ],
@@ -622,6 +624,107 @@ class _PortToolsCardState extends State<PortToolsCard> {
           if (_msg != null) ...[
             const SizedBox(height: 8),
             Text(_msg!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+// ---- HTTPS (local CA) on/off toggle (admin) ----
+class HttpsCard extends StatefulWidget {
+  const HttpsCard({super.key});
+  @override
+  State<HttpsCard> createState() => _HttpsCardState();
+}
+
+class _HttpsCardState extends State<HttpsCard> {
+  Map<String, dynamic>? _st;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await Api.instance.httpsStatus();
+      if (mounted) setState(() => _st = s);
+    } catch (_) {}
+  }
+
+  Future<void> _toggle(bool on) async {
+    setState(() => _busy = true);
+    try {
+      if (on) {
+        await Api.instance.httpsEnable();
+      } else {
+        await Api.instance.httpsDisable();
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _st;
+    final on = st?['enabled'] == true && st?['running'] == true;
+    final port = st?['port'] ?? 8443;
+    final ips = (st?['ips'] as List?)?.cast<String>() ?? [];
+    final host = ips.isNotEmpty ? ips.first : (st?['hostname']?.toString() ?? 'localhost');
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(on ? Icons.lock : Icons.lock_open, size: 18, color: on ? Colors.greenAccent : Colors.white54),
+            const SizedBox(width: 8),
+            const Text('HTTPS (เข้ารหัส — local CA)', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            if (_busy)
+              const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            else
+              Switch(value: on, onChanged: st == null ? null : _toggle),
+          ]),
+          const SizedBox(height: 4),
+          const Text(
+            'เปิดแล้ว server จะเสิร์ฟ https บนพอร์ตแยก (http เดิมยังใช้ได้) — ปิดการดักฟังรหัสในวง LAN',
+            style: TextStyle(fontSize: 12, color: Colors.white54),
+          ),
+          if (on) ...[
+            const SizedBox(height: 12),
+            SelectableText('เข้าที่:  https://$host:$port',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: Colors.greenAccent)),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('เอา warning ออก (ทำครั้งเดียวต่อเครื่องที่จะเข้า):',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                const Text(
+                  '1. โหลดไฟล์ CA ด้านล่าง  2. ดับเบิลคลิก → Install → เลือก "Trusted Root Certification Authorities"  3. เปิด https://… จะขึ้นแม่กุญแจเขียว ไม่เตือน',
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => launchUrl(Uri.parse(Api.instance.caCertUrl), webOnlyWindowName: '_blank'),
+                  icon: const Icon(Icons.download, size: 16),
+                  label: const Text('Download CA cert'),
+                ),
+              ]),
+            ),
           ],
         ]),
       ),

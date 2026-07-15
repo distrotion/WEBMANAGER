@@ -61,6 +61,16 @@ app.use('/api/sites', authMiddleware, require('./routes/ssl.routes'));
 const uiDir =
   process.env.MANAGER_UI ||
   path.join(__dirname, '..', '..', 'ui', 'build', 'web');
+// Public download of the local-CA cert (public part only) so client machines can
+// install it as a Trusted Root and get a warning-free padlock. Not secret.
+app.get('/panel-ca.crt', (req, res) => {
+  const p = require('./tls').caCertPath();
+  if (!fs.existsSync(p)) return res.status(404).send('no CA yet — enable HTTPS first');
+  res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+  res.setHeader('Content-Disposition', 'attachment; filename="webmanager-ca.crt"');
+  res.send(fs.readFileSync(p));
+});
+
 if (fs.existsSync(path.join(uiDir, 'index.html'))) {
   // Never cache the app shell / bootstrap so a redeploy is picked up immediately.
   app.use((req, res, next) => {
@@ -79,9 +89,10 @@ if (fs.existsSync(path.join(uiDir, 'index.html'))) {
 const server = http.createServer(app);
 
 // Route WebSocket upgrades by path: /ws = live logs, /pty = interactive shell.
+// Shared by the HTTP and (optional) HTTPS listeners.
 const logWss = logbus.makeWss();
 const ptyWss = require('./pty').makeWss();
-server.on('upgrade', (req, socket, head) => {
+function handleUpgrade(req, socket, head) {
   let pathname;
   try {
     pathname = new URL(req.url, 'http://localhost').pathname;
@@ -97,7 +108,19 @@ server.on('upgrade', (req, socket, head) => {
   } else {
     socket.destroy();
   }
-});
+}
+server.on('upgrade', handleUpgrade);
+
+// Optional HTTPS panel (self-generated local CA) — starts if it was left enabled.
+const tls = require('./tls');
+tls.attach(app, handleUpgrade);
+if (require('./settings').get('https_enabled') === '1') {
+  try {
+    tls.start();
+  } catch (e) {
+    console.error('[webmanager] https start failed:', e.message);
+  }
+}
 
 server.listen(config.PORT, () => {
   console.log(`[webmanager] API on :${config.PORT}  (root=${config.ROOT})`);
