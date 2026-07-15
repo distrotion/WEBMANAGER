@@ -1,11 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xterm/xterm.dart';
 import 'api.dart';
 
 /// A real interactive shell on the server (admin only), rendered with xterm and
 /// bridged to a node-pty process over WebSocket (/pty).
+///
+/// Copy/paste: drag to select then Copy (or Cmd/Ctrl+Shift+C); Paste button,
+/// right-click, or Cmd/Ctrl+Shift+V. Ctrl+C stays SIGINT (unaffected).
 class ShellConsolePage extends StatefulWidget {
   final String? cwd;
   final String? site;
@@ -18,6 +22,7 @@ class ShellConsolePage extends StatefulWidget {
 
 class _ShellConsolePageState extends State<ShellConsolePage> {
   final terminal = Terminal(maxLines: 10000);
+  final _controller = TerminalController();
   WebSocketChannel? _ch;
   bool _closed = false;
 
@@ -51,6 +56,33 @@ class _ShellConsolePageState extends State<ShellConsolePage> {
     } catch (_) {}
   }
 
+  // Copy the current mouse selection to the clipboard.
+  Future<void> _copy() async {
+    final sel = _controller.selection;
+    final text = sel == null ? null : terminal.buffer.getText(sel);
+    if (text == null || text.isEmpty) {
+      _toast('เลือกข้อความก่อน (ลากเมาส์คลุม) แล้วค่อย Copy');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    _controller.clearSelection();
+    _toast('คัดลอกแล้ว (${text.length} ตัวอักษร)');
+  }
+
+  // Paste clipboard text into the shell (goes through onOutput → server).
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) terminal.paste(text);
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(milliseconds: 900)),
+    );
+  }
+
   void _reconnect() {
     _closed = true;
     _ch?.sink.close();
@@ -63,6 +95,7 @@ class _ShellConsolePageState extends State<ShellConsolePage> {
   void dispose() {
     _closed = true;
     _ch?.sink.close();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -72,13 +105,30 @@ class _ShellConsolePageState extends State<ShellConsolePage> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          IconButton(tooltip: 'Copy selection (Cmd/Ctrl+Shift+C)', onPressed: _copy, icon: const Icon(Icons.copy)),
+          IconButton(tooltip: 'Paste (คลิกขวา / Cmd/Ctrl+Shift+V)', onPressed: _paste, icon: const Icon(Icons.paste)),
           IconButton(tooltip: 'Reconnect', onPressed: _reconnect, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: Container(
-        color: const Color(0xFF0B1020),
-        padding: const EdgeInsets.all(8),
-        child: TerminalView(terminal, autofocus: true),
+      body: CallbackShortcuts(
+        bindings: {
+          // Cmd on macOS, Ctrl+Shift on Windows/Linux (Ctrl+C alone stays SIGINT).
+          const SingleActivator(LogicalKeyboardKey.keyC, meta: true): _copy,
+          const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _paste,
+          const SingleActivator(LogicalKeyboardKey.keyC, control: true, shift: true): _copy,
+          const SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true): _paste,
+        },
+        child: Container(
+          color: const Color(0xFF0B1020),
+          padding: const EdgeInsets.all(8),
+          child: TerminalView(
+            terminal,
+            controller: _controller,
+            autofocus: true,
+            // right-click anywhere pastes the clipboard (classic terminal behaviour)
+            onSecondaryTapDown: (_, __) => _paste(),
+          ),
+        ),
       ),
     );
   }
