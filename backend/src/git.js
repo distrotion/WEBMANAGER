@@ -81,17 +81,30 @@ function gitEnv() {
 async function ensureRepo(site, channel) {
   const dir = repoDir(site);
   const branch = site.branch || 'main';
-  const url = authedUrl(site.repo_url);
-  const opts = { channel, env: gitEnv(), redact: tokenFor(site.repo_url) || undefined };
+  const plain = site.repo_url;
+  const authed = authedUrl(plain);
+  const usedToken = authed !== plain;
+  const opts = { channel, env: gitEnv(), redact: tokenFor(plain) || undefined };
+  const isClone = !fs.existsSync(path.join(dir, '.git'));
+  if (isClone) fs.mkdirSync(path.dirname(dir), { recursive: true });
 
-  if (fs.existsSync(path.join(dir, '.git'))) {
-    return run(config.git.exe, ['-C', dir, 'pull', url, branch], opts);
+  const gitCmd = (url) =>
+    isClone
+      ? run(config.git.exe, ['clone', '-b', branch, url, dir], opts)
+      : run(config.git.exe, ['-C', dir, 'pull', url, branch], opts);
+
+  let r = await gitCmd(authed);
+  // A public repo is readable anonymously, but a scoped/expired token injected
+  // into the URL makes GitHub reject it (403 "write access not granted" — even
+  // for public repos not in a fine-grained token's allowlist). Retry once with
+  // no token so public repos always work regardless of token scope.
+  if (r.code !== 0 && usedToken) {
+    require('./logbus').emitLog(channel, '[git] auth failed — retrying without token (public repo?)');
+    r = await gitCmd(plain);
   }
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
-  const r = await run(config.git.exe, ['clone', '-b', branch, url, dir], opts);
   // scrub any token from the stored remote so it isn't left on disk
-  if (r.code === 0 && url !== site.repo_url) {
-    await run(config.git.exe, ['-C', dir, 'remote', 'set-url', 'origin', site.repo_url], {
+  if (isClone && r.code === 0 && usedToken) {
+    await run(config.git.exe, ['-C', dir, 'remote', 'set-url', 'origin', plain], {
       channel: 'silent',
       env: gitEnv(),
     });
