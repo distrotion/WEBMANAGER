@@ -76,7 +76,7 @@ Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
 - **SSL:** drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`, then
   press **Issue SSL** on a site.
 - **Node-RED:** run `.\deploy\install-nodered.ps1 -Root C:\webmanager` once.
-- **Update:** `git pull` then `.\setup.cmd` (or `.\deploy\install.ps1 -Root C:\webmanager`).
+- **Update:** `git pull` then **`.\update.cmd`** (light: swaps code + restarts). Use `setup.cmd` only for the first install or when adding nginx/services.
 
 ### Start / stop / uninstall
 ```powershell
@@ -161,7 +161,8 @@ curl -s -X POST http://<server>:8088/api/gateways \
 
 ## Project layout
 ```
-setup.cmd / setup.ps1   one-click Windows setup (check + install + verify)
+setup.cmd / setup.ps1   first-time Windows install (check + install + verify)
+update.cmd / update.ps1  quick update (swap code + restart, no reinstall)
 backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
             firewall, PM2/NSSM process control, win-acme, WebSocket logs + shell (pty),
             autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward), ports
