@@ -88,10 +88,21 @@ async function ensureRepo(site, channel) {
   const isClone = !fs.existsSync(path.join(dir, '.git'));
   if (isClone) fs.mkdirSync(path.dirname(dir), { recursive: true });
 
-  const gitCmd = (url) =>
-    isClone
-      ? run(config.git.exe, ['clone', '-b', branch, url, dir], opts)
-      : run(config.git.exe, ['-C', dir, 'pull', url, branch], opts);
+  // Update = fetch + hard reset to the remote branch (not `git pull`). A plain
+  // pull refuses with "local changes would be overwritten" when tracked files got
+  // modified on the server — npm install touching package-lock, an app writing
+  // into its own dir, or CRLF churn — making auto-deploy fail every cycle. Reset
+  // --hard forces the tree to match the remote; untracked files (node_modules,
+  // runtime logs) are left intact.
+  const gitCmd = async (url) => {
+    if (isClone) return run(config.git.exe, ['clone', '-b', branch, url, dir], opts);
+    const f = await run(config.git.exe, ['-C', dir, 'fetch', url, branch], opts);
+    if (f.code !== 0) return f;
+    return run(config.git.exe, ['-C', dir, 'reset', '--hard', 'FETCH_HEAD'], {
+      channel,
+      env: gitEnv(),
+    });
+  };
 
   let r = await gitCmd(authed);
   // A public repo is readable anonymously, but a scoped/expired token injected
