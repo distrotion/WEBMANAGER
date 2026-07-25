@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS gateways (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS shares (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  root_path  TEXT NOT NULL,             -- absolute folder on this server (read-only)
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS autodeploy_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id     INTEGER,

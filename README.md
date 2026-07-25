@@ -16,6 +16,8 @@ A web control panel to deploy and manage many web apps behind **nginx** on
   dashboard, and a server switcher that reroutes the whole panel (sites, deploy, logs,
   console) through the hub to any child. Children can self-register at the hub.
 - **Remote Gateway** — raw-TCP port forwarders (tunnel HTTP/WS/TLS to any host:port).
+- **File Share** — expose a server folder as a **read-only** download tree so an
+  external job (e.g. an ML pipeline pulling QC images to train) can list + fetch files.
 - **Port tools** — inspect and kill whatever holds a port, from the panel.
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
 - **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
@@ -146,6 +148,29 @@ curl -s -X POST http://<server>:8088/api/gateways \
   -d '{"name":"Line-B HMI","dest_host":"172.23.10.50","dest_port":3012,"listen_port":8080}'
 ```
 
+## File Share — let an ML job pull images (read-only)
+
+**Account menu → File Share** (admin). Point a **share** at a folder on this server
+(e.g. where QC captures its images); a consumer then **lists and downloads** files over
+HTTP. It is strictly **read-only** — there is no upload/delete/overwrite path — and every
+request is confined to the share root (path traversal and symlink escapes are refused).
+
+- Admin browses + downloads in the panel. A script on another machine uses an
+  **`x-api-token`** (generate it on the page). Loopback (127.0.0.1) needs no token; the
+  api-token can only read files — defining shares stays login-only.
+- `list?recursive=1` flattens the whole subtree so a training job enumerates every image
+  path in one call, then fetches each with `file?path=…`.
+
+```bash
+TOKEN=fst_...          # from the File Share page
+BASE=http://<server>:8088
+SHARE=1                # the share's id (shown in the panel)
+# every file under the share:
+curl -s -H "x-api-token: $TOKEN" "$BASE/api/shares/$SHARE/list?recursive=1"
+# download one image:
+curl -s -H "x-api-token: $TOKEN" "$BASE/api/shares/$SHARE/file?path=2026-07/img001.jpg" -o img001.jpg
+```
+
 ## Fleet — one hub, many servers (แม่/ลูก)
 
 **Account menu → Fleet** (admin). Set each server's role:
@@ -165,7 +190,8 @@ setup.cmd / setup.ps1   first-time Windows install (check + install + verify)
 update.cmd / update.ps1  quick update (swap code + restart, no reinstall)
 backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
             firewall, PM2/NSSM process control, win-acme, WebSocket logs + shell (pty),
-            autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward), ports
+            autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward),
+            shares (read-only file share), ports
 ui/         Flutter web control panel
 deploy/     install.ps1, uninstall.ps1, install-nodered.ps1, bundled tools\nssm.exe
 scripts/    start/stop/status for macOS/Linux + Windows

@@ -313,6 +313,66 @@ class Api {
     await http.delete(_u('/api/gateways/token'), headers: _headers);
   }
 
+  // ---- File Share (read-only folder exposure, e.g. ML image pulls) ----
+  /// Base origin of the server the UI was served from — used in the copy-paste
+  /// curl example so it points at a real address, not the hub proxy path.
+  String get serverOrigin => _base;
+
+  Future<List<Map<String, dynamic>>> shares() async {
+    final r = await http.get(_u('/api/shares'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'shares failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createShare(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/shares'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateShare(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/shares/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteShare(int id) async {
+    await http.delete(_u('/api/shares/$id'), headers: _headers);
+  }
+
+  /// List a folder inside a share. [recursive] flattens the whole subtree.
+  Future<Map<String, dynamic>> shareList(int id, {String path = '', bool recursive = false}) async {
+    final q = <String, String>{if (path.isNotEmpty) 'path': path, if (recursive) 'recursive': '1'};
+    final base = _u('/api/shares/$id/list');
+    final uri = base.replace(queryParameters: {...base.queryParameters, ...q});
+    final r = await http.get(uri, headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'list failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Fetch one file's raw bytes (auth header attached; a plain link can't).
+  Future<List<int>> shareFileBytes(int id, String path) async {
+    final base = _u('/api/shares/$id/file');
+    final uri = base.replace(queryParameters: {...base.queryParameters, 'path': path});
+    final r = await http.get(uri, headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+    if (r.statusCode != 200) throw Exception('download failed (${r.statusCode})');
+    return r.bodyBytes;
+  }
+
+  Future<bool> shareHasToken() async {
+    final r = await http.get(_u('/api/shares/token'), headers: _headers);
+    if (r.statusCode != 200) return false;
+    return jsonDecode(r.body)['hasToken'] == true;
+  }
+
+  Future<String> genShareToken() async {
+    final r = await http.post(_u('/api/shares/token'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'token failed');
+    return jsonDecode(r.body)['token'] as String;
+  }
+
+  Future<void> revokeShareToken() async {
+    await http.delete(_u('/api/shares/token'), headers: _headers);
+  }
+
   /// Who holds a port: [{pid, name, proto}] (admin).
   Future<List<Map<String, dynamic>>> portInfo(int port) async {
     final r = await http.get(_u('/api/system/port/$port'), headers: _headers);

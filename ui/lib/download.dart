@@ -35,3 +35,14 @@ void downloadText(String filename, String content) {
     ..click();
   html.Url.revokeObjectUrl(url);
 }
+
+/// Trigger a browser "save as" of raw [bytes] (e.g. a file fetched with an auth
+/// header, which a plain <a download> link can't send).
+void downloadBytes(String filename, List<int> bytes) {
+  final blob = html.Blob([bytes]);
+  final url = html.Url.createObjectUrlFromBlob(blob);
+  html.AnchorElement(href: url)
+    ..setAttribute('download', filename)
+    ..click();
+  html.Url.revokeObjectUrl(url);
+}

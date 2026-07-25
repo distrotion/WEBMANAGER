@@ -12,6 +12,7 @@ import 'audit.dart';
 import 'download.dart';
 import 'fleet.dart';
 import 'gateway.dart';
+import 'file_share.dart';
 import 'autodeploy_log.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
@@ -328,6 +329,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FleetPage()));
               } else if (v == 'gateway') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const GatewayPage()));
+              } else if (v == 'fileshare') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FileSharePage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -358,6 +361,8 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'fleet', child: ListTile(leading: Icon(Icons.hub), title: Text('Fleet (แม่/ลูก)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'gateway', child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Remote Gateway (port forward)'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'fileshare', child: ListTile(leading: Icon(Icons.folder_shared), title: Text('File Share (ให้ ML ดึงรูป)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)
