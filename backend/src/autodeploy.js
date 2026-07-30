@@ -43,6 +43,16 @@ async function checkOne(site) {
   const remote = await remoteHead(site);
   if (!remote) return; // network / auth issue — try again next tick
   if (sameCommit(remote, site.last_commit)) return; // up to date
+  // A commit that already FAILED THE HEALTH GATE is deterministic — redeploying
+  // it would just bounce the rolled-back app (npm install + restart) every tick.
+  // Skip it until a new commit lands. Git/network failures are NOT skipped:
+  // those can be transient and should keep retrying.
+  const last = db
+    .prepare('SELECT ok, to_commit, message FROM autodeploy_log WHERE site_id=? ORDER BY id DESC LIMIT 1')
+    .get(site.id);
+  if (last && !last.ok && /step health/.test(last.message || '') && sameCommit(remote, last.to_commit)) {
+    return; // this exact commit already failed health — waiting for a fix commit
+  }
   inFlight.add(site.id);
   emitLog(channel, `[auto-deploy] new commit ${remote.slice(0, 8)} (deployed ${site.last_commit || 'none'}) — deploying`);
   let ok = true;
@@ -53,7 +63,10 @@ async function checkOne(site) {
       ? await deploy.deployStatic(site, user)
       : await deploy.deployNode(site, user);
     ok = !!(r && r.ok);
-    if (!ok) message = `deploy failed at step ${r && r.step ? r.step : '?'}`;
+    if (!ok) {
+      message = `deploy failed at step ${r && r.step ? r.step : '?'}`;
+      if (r && r.rolledBack) message += ' — rolled back to previous version';
+    }
   } catch (e) {
     ok = false;
     message = e.message;

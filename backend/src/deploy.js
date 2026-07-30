@@ -152,6 +152,41 @@ async function deployNode(site, user) {
   }
   await pm2.restart(site, channel); // starts on first run
 
+  // --- health gate: the new code must actually answer before we call it done.
+  // On failure, roll back ONE step to the previously deployed commit (still in
+  // the local git objects) and stop there — no cascading walk into history.
+  const health = await require('./health').waitHealthy(site, channel);
+  if (!health.ok) {
+    const prev = site.last_commit; // commit that was running before this deploy
+    if (site.source_type === 'git' && prev) {
+      emitLog(channel, `[rollback] health failed — rolling back to ${prev}`);
+      const rb = await run(config.git.exe, ['-C', repoDir, 'reset', '--hard', prev], {
+        channel,
+        env: git.gitEnv(),
+      });
+      if (rb.code === 0) {
+        if (fs.existsSync(path.join(repoDir, 'package.json'))) {
+          emitLog(channel, '[rollback] npm install --omit=dev');
+          await run('npm', ['install', '--omit=dev'], { cwd: repoDir, channel, shell: true });
+        }
+        await pm2.restart(site, channel);
+        const again = await require('./health').waitHealthy(site, channel);
+        db.prepare('UPDATE sites SET status=? WHERE id=?').run(again.ok ? 'rolled-back' : 'error', site.id);
+        audit(user, 'rollback', site.name, prev);
+        emitLog(
+          channel,
+          again.ok
+            ? `=== Rolled back to ${prev} — new commit failed health check ===`
+            : '=== Rollback also unhealthy — manual attention needed ==='
+        );
+        return { ok: false, step: 'health', rolledBack: again.ok };
+      }
+    }
+    db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+    emitLog(channel, '=== Deploy failed health check (no previous version to roll back to) ===');
+    return { ok: false, step: 'health' };
+  }
+
   // A node app is reached directly on its port. Only touch nginx if it's also
   // exposed via a front (subdomain/path proxy).
   if (site.exposure_mode) {
