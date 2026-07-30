@@ -6,27 +6,32 @@ const settings = require('../settings');
 const git = require('../git');
 const config = require('../config');
 const { run } = require('../runner');
+const guard = require('../guard');
 
 const router = express.Router();
 
 // --- Git credentials (Personal Access Token for private repos) ---
-router.get('/git-credentials', (req, res) => {
+router.get('/git-credentials', guard.adminOnly, (req, res) => {
   res.json({ hasToken: !!settings.get('git_token') });
 });
-router.put('/git-credentials', (req, res) => {
+router.put('/git-credentials', guard.adminOnly, (req, res) => {
   const t = ((req.body && req.body.token) || '').trim();
   if (!t) return res.status(400).json({ error: 'token required' });
   settings.set('git_token', t);
   res.json({ ok: true, hasToken: true });
 });
-router.delete('/git-credentials', (req, res) => {
+router.delete('/git-credentials', guard.adminOnly, (req, res) => {
   settings.del('git_token');
   res.json({ ok: true, hasToken: false });
 });
 // Test the token against a repo URL (streams to the system channel, token masked).
-router.post('/git-credentials/test', (req, res) => {
+router.post('/git-credentials/test', guard.adminOnly, (req, res) => {
   const url = req.body && req.body.url;
   if (!url) return res.status(400).json({ error: 'url required' });
+  // Validate the transport: git's `ext::` helper runs a shell command, and the
+  // stored PAT is injected into this URL — an arbitrary host would receive it.
+  const bad = guard.repoUrl(url);
+  if (bad) return res.status(400).json({ error: bad });
   res.json({ started: true, channel: 'system' });
   git.lsRemote(url, 'system');
 });
@@ -35,10 +40,10 @@ router.post('/git-credentials/test', (req, res) => {
 // git.company.com). The token whose host matches a repo URL is used; the legacy
 // single git_token above still works as a catch-all fallback. ---
 const db = require('../db');
-router.get('/git-credentials/list', (req, res) => {
+router.get('/git-credentials/list', guard.adminOnly, (req, res) => {
   res.json(db.prepare('SELECT id, name, host FROM git_credentials ORDER BY host').all());
 });
-router.post('/git-credentials/list', (req, res) => {
+router.post('/git-credentials/list', guard.adminOnly, (req, res) => {
   const b = req.body || {};
   // Accept a bare host ('github.com'), host+owner ('github.com/distrotion',
   // 'dev.azure.com/myorg'), or a full repo URL — normalized to 'host/path'.
@@ -59,7 +64,7 @@ router.post('/git-credentials/list', (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-router.delete('/git-credentials/list/:id', (req, res) => {
+router.delete('/git-credentials/list/:id', guard.adminOnly, (req, res) => {
   db.prepare('DELETE FROM git_credentials WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -73,7 +78,7 @@ router.get('/requirements', async (req, res) => {
 });
 
 // Browse server folders to locate a local source.
-router.get('/browse', (req, res) => {
+router.get('/browse', guard.adminOnly, (req, res) => {
   try {
     res.json(system.browse(req.query.path));
   } catch (e) {
@@ -83,7 +88,7 @@ router.get('/browse', (req, res) => {
 
 // nginx lifecycle from the panel (logs stream on the `system` channel).
 const NGINX_ACTIONS = { test: nginx.test, start: nginx.start, stop: nginx.stop, reload: nginx.reload };
-router.post('/nginx/:action', (req, res) => {
+router.post('/nginx/:action', guard.adminOnly, (req, res) => {
   const fn = NGINX_ACTIONS[req.params.action];
   if (!fn) return res.status(400).json({ error: 'unknown action' });
   res.json({ started: true, channel: 'system' });
@@ -91,16 +96,14 @@ router.post('/nginx/:action', (req, res) => {
 });
 
 // ---- port tools (admin): who holds a port / kill it ----
-const adminOnly = (req, res, next) =>
-  req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
 
-router.get('/port/:port', adminOnly, async (req, res) => {
+router.get('/port/:port', guard.adminOnly, async (req, res) => {
   const port = parseInt(req.params.port, 10);
   if (!port || port < 1 || port > 65535) return res.status(400).json({ error: 'bad port' });
   res.json(await require('../ports').whoOnPort(port));
 });
 
-router.post('/killport', adminOnly, async (req, res) => {
+router.post('/killport', guard.adminOnly, async (req, res) => {
   const port = parseInt(req.body && req.body.port, 10);
   if (!port || port < 1 || port > 65535) return res.status(400).json({ error: 'bad port' });
   if (port === config.PORT) {
@@ -113,20 +116,20 @@ router.post('/killport', adminOnly, async (req, res) => {
 });
 
 // ---- HTTPS panel (local CA) — admin ----
-router.get('/https', adminOnly, (req, res) => res.json(require('../tls').status()));
-router.post('/https/enable', adminOnly, (req, res) => {
+router.get('/https', guard.adminOnly, (req, res) => res.json(require('../tls').status()));
+router.post('/https/enable', guard.adminOnly, (req, res) => {
   const tls = require('../tls');
   const st = tls.start();
   require('../audit').audit(req.user, 'https-enable', `:${st.port}`);
   res.json(st);
 });
-router.post('/https/disable', adminOnly, (req, res) => {
+router.post('/https/disable', guard.adminOnly, (req, res) => {
   const tls = require('../tls');
   const st = tls.stop();
   require('../audit').audit(req.user, 'https-disable');
   res.json(st);
 });
-router.post('/https/regenerate', adminOnly, (req, res) => {
+router.post('/https/regenerate', guard.adminOnly, (req, res) => {
   const st = require('../tls').regenerate();
   require('../audit').audit(req.user, 'https-regen-cert');
   res.json(st);

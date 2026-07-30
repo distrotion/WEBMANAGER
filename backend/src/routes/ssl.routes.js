@@ -3,11 +3,12 @@ const express = require('express');
 const db = require('../db');
 const ssl = require('../ssl');
 const { audit } = require('../audit');
+const guard = require('../guard');
 
 const router = express.Router();
 const getSite = (id) => db.prepare('SELECT * FROM sites WHERE id=?').get(id);
 
-router.post('/:id/ssl/issue', (req, res) => {
+router.post('/:id/ssl/issue', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const channel = `site-${s.id}`;
@@ -18,7 +19,7 @@ router.post('/:id/ssl/issue', (req, res) => {
     .catch((e) => require('../logbus').emitLog(channel, `[fatal] ${e.message}`));
 });
 
-router.post('/:id/ssl/disable', (req, res) => {
+router.post('/:id/ssl/disable', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const channel = `site-${s.id}`;

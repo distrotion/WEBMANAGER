@@ -1,12 +1,14 @@
 'use strict';
 // File Share API. Read-only exposure of server folders for external consumers
 // (e.g. an ML job pulling QC images). Auth mirrors the Remote Gateway:
-//   1. loopback (127.0.0.1) — no token
-//   2. header `x-api-token: <token>`  (or `Authorization: Bearer <token>`)
-//   3. an admin login JWT / fleet token — so the UI + hub proxy keep working
+//   1. header `x-api-token: <token>`  (or `Authorization: Bearer <token>`)
+//   2. an admin login JWT / fleet token — so the UI + hub proxy keep working
+// There is deliberately NO loopback exemption: apps this manager deploys run on
+// this same host, so "from 127.0.0.1" is not evidence of an operator — it would
+// hand every deployed app admin over the share API.
 // The api-token can ONLY read files (list/download). Managing shares and the
-// token itself needs a real login (or loopback/fleet) — a leaked read token
-// must not be able to point a new share at some other folder, or rotate itself.
+// token itself needs a real login — a leaked read token must not be able to
+// point a new share at some other folder, or rotate itself.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -19,16 +21,7 @@ const { verifyAnyToken } = require('../auth');
 
 const router = express.Router();
 
-function isLoopback(req) {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-
 function shareAuth(req, res, next) {
-  if (isLoopback(req)) {
-    req.user = { username: 'loopback', role: 'admin' };
-    return next();
-  }
   const apiTok = settings.get('share_api_token');
   const h = req.headers.authorization || '';
   const bearer = h.startsWith('Bearer ') ? h.slice(7) : null;
@@ -47,7 +40,7 @@ function shareAuth(req, res, next) {
 router.use(shareAuth);
 
 // Real-login gate for anything beyond reading files: the api-token identity is
-// blocked, everyone else (loopback / JWT / fleet) passes.
+// blocked, an admin JWT / fleet login passes.
 function manageOnly(req, res, next) {
   if (req.user && req.user.username !== 'api-token') return next();
   return res.status(403).json({ error: 'manage shares from a logged-in session' });

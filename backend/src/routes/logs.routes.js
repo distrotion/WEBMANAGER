@@ -3,6 +3,8 @@ const express = require('express');
 const db = require('../db');
 const logprune = require('../logprune');
 
+const guard = require('../guard');
+
 const router = express.Router();
 
 // Retention settings (keep last N months + auto-prune on/off).
@@ -12,7 +14,7 @@ router.get('/settings', (req, res) => {
     autoPrune: logprune.autoPruneEnabled(),
   });
 });
-router.put('/settings', (req, res) => {
+router.put('/settings', guard.adminOnly, (req, res) => {
   const b = req.body || {};
   if (b.retentionMonths != null) logprune.setRetentionMonths(b.retentionMonths);
   if (b.autoPrune != null) logprune.setAutoPrune(!!b.autoPrune);
@@ -32,7 +34,7 @@ router.get('/autodeploy', (req, res) => {
 });
 
 // Delete logs older than N months now (defaults to the configured retention).
-router.post('/prune', (req, res) => {
+router.post('/prune', guard.adminOnly, (req, res) => {
   const months = (req.body && req.body.months) || logprune.retentionMonths();
   const deleted = logprune.pruneOlderThan(months);
   res.json({ ok: true, deleted, months });
@@ -58,18 +60,8 @@ router.get('/download', (req, res) => {
   res.send(text);
 });
 
-// Download a channel's full history as a .log text file.
-router.get('/download', (req, res) => {
-  const channel = req.query.channel || 'system';
-  const rows = db.prepare('SELECT line FROM logs WHERE channel=? ORDER BY id ASC').all(channel);
-  const text = rows.map((r) => r.line).join('\n');
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${channel.replace(/[^\w.-]/g, '_')}.log"`);
-  res.send(text);
-});
-
 // Clear a channel's history.
-router.delete('/history', (req, res) => {
+router.delete('/history', guard.adminOnly, (req, res) => {
   const channel = req.query.channel;
   if (!channel) return res.status(400).json({ error: 'channel required' });
   db.prepare('DELETE FROM logs WHERE channel=?').run(channel);

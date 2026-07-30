@@ -11,7 +11,9 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **Runtimes** — static Flutter web, **Node-RED** (auto-installs the shared runtime on
   first start; CORS + editor-login togglable), and Node backends managed by **PM2**
   (live CPU/RAM/status, PM2-list view, reboot-safe).
-- **CI/CD auto-deploy** — watch a git branch and Pull & Deploy automatically on new commits.
+- **CI/CD auto-deploy** — watch a git branch and Pull & Deploy automatically on new commits,
+  with a **post-deploy health check**: a node app must answer HTTP on its port or the deploy
+  **rolls back** to the previous commit automatically (status shows `rolled-back`).
 - **Fleet (แม่/ลูก)** — one webmanager (hub) manages many others (agents): live fleet
   dashboard, and a server switcher that reroutes the whole panel (sites, deploy, logs,
   console) through the hub to any child. Children can self-register at the hub.
@@ -22,6 +24,9 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
 - **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
 - **Multi-user** — admin-managed accounts and roles; login is remembered.
+  **`admin` may change the server; `user` is a read-only monitoring view** — every
+  route that deploys, launches, configures, or reads credentials is admin-only
+  and enforced server-side (deploying runs code, so it is an operator action).
 - **Live logs** — every action streams its output to an in-browser console.
 
 ```
@@ -138,8 +143,9 @@ WebSocket, and TLS transparently (no path rewrite; the target handles its own au
   reach serverB's HMI through this manager.
 
 **Scripting from another machine** — the gateway API also accepts an **`x-api-token`**
-(generate it on the Remote Gateway page). Loopback (127.0.0.1) needs no token; the UI
-uses your login. Example:
+(generate it on the Remote Gateway page); the UI uses your login. A token is required
+even from the server itself — apps this manager deploys run on that same host, so
+"from 127.0.0.1" is not proof of an operator. Example:
 
 ```bash
 TOKEN=gwt_...   # from the Remote Gateway page
@@ -155,9 +161,9 @@ curl -s -X POST http://<server>:8088/api/gateways \
 HTTP. It is strictly **read-only** — there is no upload/delete/overwrite path — and every
 request is confined to the share root (path traversal and symlink escapes are refused).
 
-- Admin browses + downloads in the panel. A script on another machine uses an
-  **`x-api-token`** (generate it on the page). Loopback (127.0.0.1) needs no token; the
-  api-token can only read files — defining shares stays login-only.
+- Admin browses + downloads in the panel. A script uses an **`x-api-token`**
+  (generate it on the page) — required from any host, including the server itself.
+  The api-token can only read files; defining shares stays login-only.
 - `list?recursive=1` flattens the whole subtree so a training job enumerates every image
   path in one call, then fetches each with `file?path=…`.
 

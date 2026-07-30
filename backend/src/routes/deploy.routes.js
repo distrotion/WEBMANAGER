@@ -3,12 +3,13 @@ const express = require('express');
 const db = require('../db');
 const deploy = require('../deploy');
 const nginx = require('../nginx');
+const guard = require('../guard');
 
 const router = express.Router();
 const getSite = (id) => db.prepare('SELECT * FROM sites WHERE id=?').get(id);
 
 // Kick off deploy; logs stream over WebSocket channel `site-<id>`.
-router.post('/:id/deploy', (req, res) => {
+router.post('/:id/deploy', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const channel = `site-${s.id}`;
@@ -23,7 +24,7 @@ router.post('/:id/deploy', (req, res) => {
 });
 
 // Validate + reload nginx (system channel)
-router.post('/:id/reload', async (req, res) => {
+router.post('/:id/reload', guard.adminOnly, async (req, res) => {
   res.json({ started: true, channel: 'system' });
   const t = await nginx.test('system');
   if (t.code === 0) await nginx.reload('system');

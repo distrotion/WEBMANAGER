@@ -26,10 +26,34 @@ const ROOT =
     ? 'C:\\webmanager'
     : path.join(os.homedir(), 'webmanager-dev'));
 
+// Never fall back to a constant secret: this repo is public, so a hardcoded
+// default means anyone can forge an admin token. When JWT_SECRET is not set
+// (dev, or a partial install), mint a random one once and keep it in the data
+// dir — unknowable to an outsider, and stable so logins survive a restart.
+function resolveJwtSecret() {
+  const fromEnv = (process.env.JWT_SECRET || '').trim();
+  if (fromEnv) return fromEnv;
+  const file = path.join(ROOT, 'data', 'jwt.secret');
+  try {
+    const existing = fs.readFileSync(file, 'utf8').trim();
+    if (existing) return existing;
+  } catch {
+    /* not created yet */
+  }
+  const generated = require('crypto').randomBytes(48).toString('base64');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, generated, { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    /* read-only disk — the in-memory value still beats a published constant */
+  }
+  return generated;
+}
+
 module.exports = {
   ROOT,
   PORT: parseInt(process.env.PORT || '8088', 10),
-  JWT_SECRET: process.env.JWT_SECRET || 'dev-insecure-secret-change-me',
+  JWT_SECRET: resolveJwtSecret(),
   JWT_EXPIRES: process.env.JWT_EXPIRES || '12h',
   ADMIN_USER: process.env.ADMIN_USER || 'admin',
   ADMIN_PASS: process.env.ADMIN_PASS || 'admin1234',

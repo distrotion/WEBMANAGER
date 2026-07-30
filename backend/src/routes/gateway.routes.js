@@ -10,21 +10,14 @@ const { verifyAnyToken } = require('../auth');
 
 const router = express.Router();
 
-function isLoopback(req) {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-
-// Gateway API auth (per the Remote Gateway spec): accept any of
-//   1. loopback (127.0.0.1) — no token needed
-//   2. header `x-api-token: <token>`  (or `Authorization: Bearer <token>`)
-//   3. an admin login JWT / fleet token — so the UI and hub proxy keep working
+// Gateway API auth (per the Remote Gateway spec): accept either
+//   1. header `x-api-token: <token>`  (or `Authorization: Bearer <token>`)
+//   2. an admin login JWT / fleet token — so the UI and hub proxy keep working
 // The api-token lets scripts on other machines drive gateways without a login.
+// There is deliberately NO loopback exemption: a gateway opens a TCP path into
+// the network, and apps this manager deploys run on this same host — "from
+// 127.0.0.1" would let any of them open one with no credential at all.
 function gatewayAuth(req, res, next) {
-  if (isLoopback(req)) {
-    req.user = { username: 'loopback', role: 'admin' };
-    return next();
-  }
   const apiTok = settings.get('gateway_api_token');
   const h = req.headers.authorization || '';
   const bearer = h.startsWith('Bearer ') ? h.slice(7) : null;
@@ -46,8 +39,8 @@ const adminOnly = (req, res, next) =>
   req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'admin only' });
 
 // ---- API token management (view/generate/revoke) — real login only ----
-// Guarded so a leaked api-token can't rotate itself: loopback or a JWT/fleet
-// login, but NOT the api-token identity.
+// Guarded so a leaked api-token can't rotate itself: a JWT/fleet login passes,
+// the api-token identity does not.
 function tokenAdmin(req, res, next) {
   if (req.user && req.user.username !== 'api-token') return next();
   return res.status(403).json({ error: 'manage the token from a logged-in session' });

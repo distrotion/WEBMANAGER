@@ -4,9 +4,13 @@ const db = require('../db');
 const nginx = require('../nginx');
 const firewall = require('../firewall');
 const { audit } = require('../audit');
+const guard = require('../guard');
 
 const router = express.Router();
 const getSite = (id) => db.prepare('SELECT * FROM sites WHERE id=?').get(id);
+// Reads below are open to any signed-in user (monitoring view); everything that
+// changes the server is admin-only — creating a site chooses what code the
+// manager will fetch and run.
 
 router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM sites ORDER BY name').all());
@@ -18,12 +22,10 @@ router.get('/:id', (req, res) => {
   res.json(s);
 });
 
-router.post('/', (req, res) => {
+router.post('/', guard.adminOnly, (req, res) => {
   const b = req.body || {};
-  if (!b.name) return res.status(400).json({ error: 'name required' });
-  if (!/^[a-zA-Z0-9._-]+$/.test(b.name)) {
-    return res.status(400).json({ error: 'name may only contain letters, numbers, . _ - (no spaces)' });
-  }
+  const bad = guard.siteFields(b, { requireName: true });
+  if (bad) return res.status(400).json({ error: bad });
   try {
     const info = db
       .prepare(
@@ -42,8 +44,8 @@ router.post('/', (req, res) => {
         branch: b.branch || 'main',
         entry_file: b.entry_file || null,
         env_json: b.env_json || null,
-        pm2_instances: b.pm2_instances || 1,
-        direct_port: b.direct_port || null,
+        pm2_instances: b.pm2_instances ? Number(b.pm2_instances) : 1,
+        direct_port: b.direct_port ? Number(b.direct_port) : null,
         direct_port_enabled: b.direct_port_enabled === false ? 0 : 1,
         exposure_mode: b.exposure_mode || null,
         subdomain: b.subdomain || null,
@@ -80,16 +82,24 @@ const UPDATABLE = [
   'autodeploy',
 ];
 
-router.put('/:id', (req, res) => {
+router.put('/:id', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const b = req.body || {};
+  const bad = guard.siteFields(b); // an update must not smuggle in what create rejects
+  if (bad) return res.status(400).json({ error: bad });
   const sets = [];
   const vals = {};
+  const NUMERIC = new Set(['direct_port', 'pm2_instances']);
   for (const k of UPDATABLE) {
     if (k in b) {
       sets.push(`${k}=@${k}`);
-      vals[k] = typeof b[k] === 'boolean' ? (b[k] ? 1 : 0) : b[k];
+      let v = b[k];
+      if (typeof v === 'boolean') v = v ? 1 : 0;
+      // store validated numerics as numbers — SQLite would otherwise keep the
+      // original string, which is what nginx/netsh later interpolate
+      else if (NUMERIC.has(k) && v !== null && v !== '') v = Number(v);
+      vals[k] = v;
     }
   }
   if (sets.length) {
@@ -100,7 +110,7 @@ router.put('/:id', (req, res) => {
   res.json(getSite(s.id));
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   nginx.removeSiteConfigs(s);
@@ -116,7 +126,7 @@ router.delete('/:id', (req, res) => {
 
 // Toggle layer-1 direct port on/off — updates nginx + Windows Firewall, logs to
 // the site channel.
-router.post('/:id/port', (req, res) => {
+router.post('/:id/port', guard.adminOnly, (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const enabled = req.body && req.body.enabled ? 1 : 0;

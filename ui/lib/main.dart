@@ -230,6 +230,8 @@ class _SitesPageState extends State<SitesPage> {
       case 'error':
       case 'errored':
         return Colors.red;
+      case 'rolled-back': // old version restored after a failed deploy — needs a look
+        return Colors.orange;
       default:
         return Colors.grey;
     }
@@ -375,11 +377,15 @@ class _SitesPageState extends State<SitesPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _create,
-        icon: const Icon(Icons.add),
-        label: const Text('New site'),
-      ),
+      // Hiding this is UX only — the server rejects a non-admin create with 403
+      // regardless (see backend guard.adminOnly).
+      floatingActionButton: Api.instance.isAdmin
+          ? FloatingActionButton.extended(
+              onPressed: _create,
+              icon: const Icon(Icons.add),
+              label: const Text('New site'),
+            )
+          : null,
       body: Column(children: [
         _serverBar(),
         Expanded(child: FutureBuilder<List<Map<String, dynamic>>>(

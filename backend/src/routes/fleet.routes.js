@@ -30,7 +30,7 @@ function pointsToSelf(url) {
 // role: 'standalone' (default — a normal lone webmanager, no fleet), 'agent'
 // (ลูก — a hub may watch/control it), 'hub' (แม่ — watches others).
 const ROLES = ['standalone', 'agent', 'hub'];
-router.get('/', (req, res) =>
+router.get('/', adminOnly, (req, res) =>
   res.json({
     role: settings.get('fleet_role') || 'standalone',
     hasToken: !!settings.get('fleet_token'),
@@ -197,7 +197,7 @@ async function fetchJson(url, token, ms = 5000) {
   }
 }
 
-router.get('/overview', async (req, res) => {
+router.get('/overview', adminOnly, async (req, res) => {
   const remotes = db.prepare('SELECT id, name, url, token FROM remotes ORDER BY name').all();
   const out = await Promise.all(
     remotes.map(async (r) => {

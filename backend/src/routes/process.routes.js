@@ -1,10 +1,13 @@
 'use strict';
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const express = require('express');
 const db = require('../db');
 const pm2 = require('../pm2');
 const services = require('../services');
 const { audit } = require('../audit');
+const guard = require('../guard');
 
 const router = express.Router();
 const getSite = (id) => db.prepare('SELECT * FROM sites WHERE id=?').get(id);
@@ -40,9 +43,9 @@ router.get('/pm2/overview', async (req, res) => {
   }
 });
 
-router.post('/:id/start', requireProcess, action('start', pm2.start));
-router.post('/:id/stop', requireProcess, action('stop', pm2.stop));
-router.post('/:id/restart', requireProcess, action('restart', pm2.restart));
+router.post('/:id/start', guard.adminOnly, requireProcess, action('start', pm2.start));
+router.post('/:id/stop', guard.adminOnly, requireProcess, action('stop', pm2.stop));
+router.post('/:id/restart', guard.adminOnly, requireProcess, action('restart', pm2.restart));
 
 // Live CPU/RAM/restarts/uptime for the site's process (from `pm2 jlist`).
 router.get('/:id/metrics', requireProcess, async (req, res) => {
@@ -66,28 +69,42 @@ function requireNodered(req, res, next) {
   next();
 }
 
-router.get('/:id/nodered-settings', requireProcess, requireNodered, (req, res) => {
+router.get('/:id/nodered-settings', guard.adminOnly, requireProcess, requireNodered, (req, res) => {
   services.provisionNodeRed(req.site); // ensure the file exists (older sites)
   const p = services.noderedUserSettingsPath(req.site);
   res.json({ content: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '' });
 });
 
 // bcrypt-hash an editor password for adminAuth (same format as node-red-admin hash-pw).
-router.post('/:id/nodered-hash', requireProcess, requireNodered, (req, res) => {
+router.post('/:id/nodered-hash', guard.adminOnly, requireProcess, requireNodered, (req, res) => {
   const pw = String((req.body && req.body.password) || '');
   if (pw.length < 4) return res.status(400).json({ error: 'password too short (min 4)' });
   res.json({ hash: require('bcryptjs').hashSync(pw, 8) });
 });
 
-router.put('/:id/nodered-settings', requireProcess, requireNodered, (req, res) => {
+router.put('/:id/nodered-settings', guard.adminOnly, requireProcess, requireNodered, (req, res) => {
   const content = String((req.body && req.body.content) || '');
-  // light sanity check: must be evaluable and export an object
+  // Syntax-check WITHOUT running it. The previous version validated by calling
+  // `new Function(...)(module, exports, require)` — that executed the request
+  // body inside the manager process (LocalSystem), i.e. remote code execution
+  // for anyone who could reach this route. `node --check` parses only.
+  const tmp = path.join(os.tmpdir(), `wm-nodered-${req.site.id}-${process.pid}.js`);
   try {
-    const m = { exports: {} };
-    new Function('module', 'exports', 'require', content)(m, m.exports, require);
-    if (typeof m.exports !== 'object' || m.exports === null) throw new Error('must export an object');
-  } catch (e) {
-    return res.status(400).json({ error: `invalid settings.js: ${e.message}` });
+    fs.writeFileSync(tmp, content, 'utf8');
+    const chk = require('child_process').spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+    if (chk.status !== 0) {
+      const msg = String(chk.stderr || '').split('\n').find((l) => /SyntaxError|Error/.test(l)) || 'syntax error';
+      return res.status(400).json({ error: `invalid settings.js: ${msg.trim()}` });
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* already gone */
+    }
+  }
+  if (!/module\.exports/.test(content)) {
+    return res.status(400).json({ error: 'invalid settings.js: must assign module.exports' });
   }
   fs.writeFileSync(services.noderedUserSettingsPath(req.site), content, 'utf8');
   audit(req.user, 'edit-nodered-settings', req.site.name);

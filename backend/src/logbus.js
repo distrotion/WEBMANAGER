@@ -29,8 +29,16 @@ function makeWss() {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     const channel = url.searchParams.get('channel') || 'system';
-    if (!verifyAnyToken(token)) {
+    const payload = verifyAnyToken(token);
+    if (!payload) {
       ws.close(4001, 'unauthorized');
+      return;
+    }
+    // Log lines carry command output — git URLs, npm output, netsh/nginx calls.
+    // The firehose ('*') and the server-wide 'system' channel are an admin view;
+    // a non-admin may follow a single site's channel only.
+    if ((channel === '*' || channel === 'system') && payload.role !== 'admin') {
+      ws.close(4003, 'admin only');
       return;
     }
     const handler = (evt) => {
