@@ -127,6 +127,8 @@ for (const [col, def] of [
   ['entry_file', 'TEXT'],
   ['env_json', 'TEXT'],
   ['autodeploy', 'INTEGER DEFAULT 0'],
+  ['build_command', 'TEXT'],
+  ['test_command', 'TEXT'],
 ]) {
   try {
     db.prepare(`ALTER TABLE sites ADD COLUMN ${col} ${def}`).run();

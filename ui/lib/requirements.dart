@@ -52,6 +52,8 @@ class _RequirementsPageState extends State<RequirementsPage> {
               const LogSettingsCard(),
               const SizedBox(height: 16),
               if (Api.instance.isAdmin) ...[
+                const DeployNotifyCard(),
+                const SizedBox(height: 16),
                 const HttpsCard(),
                 const SizedBox(height: 16),
                 const PortToolsCard(),
@@ -745,6 +747,126 @@ class _HttpsCardState extends State<HttpsCard> {
               ]),
             ),
           ],
+        ]),
+      ),
+    );
+  }
+}
+
+/// Deploy notifications — a webhook fired when a deploy fails or rolls back, so
+/// a silent rollback still reaches someone. Only failures/rollbacks/recoveries
+/// are sent; a green deploy every few minutes would train people to ignore it.
+class DeployNotifyCard extends StatefulWidget {
+  const DeployNotifyCard({super.key});
+  @override
+  State<DeployNotifyCard> createState() => _DeployNotifyCardState();
+}
+
+class _DeployNotifyCardState extends State<DeployNotifyCard> {
+  final _url = TextEditingController();
+  bool _enabled = false;
+  String _host = '';
+  bool _busy = false;
+  String? _msg;
+
+  @override
+  void initState() {
+    super.initState();
+    Api.instance.notifyStatus().then((v) {
+      if (!mounted) return;
+      setState(() {
+        _enabled = v['enabled'] == true;
+        _host = v['host']?.toString() ?? '';
+      });
+    }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _url.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save(String url) async {
+    setState(() {
+      _busy = true;
+      _msg = null;
+    });
+    try {
+      final v = await Api.instance.setNotifyWebhook(url);
+      setState(() {
+        _enabled = v['enabled'] == true;
+        _host = v['host']?.toString() ?? '';
+        _url.clear();
+        _msg = _enabled ? 'saved' : 'cleared';
+      });
+    } catch (e) {
+      setState(() => _msg = '$e'.replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.white.withValues(alpha: 0.03),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.notifications_active, size: 16),
+            const SizedBox(width: 6),
+            const Text('Deploy notifications', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const Spacer(),
+            Text(_enabled ? 'on · $_host' : 'off',
+                style: TextStyle(fontSize: 11, color: _enabled ? Colors.greenAccent : Colors.white54)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('ยิง webhook เมื่อ deploy ล้มเหลว / rollback / กลับมาปกติ — ใช้ได้กับ Teams, Slack, Discord, Google Chat',
+              style: TextStyle(fontSize: 11, color: Colors.white38)),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _url,
+            decoration: InputDecoration(
+              labelText: _enabled ? 'เปลี่ยน webhook URL' : 'Webhook URL',
+              hintText: 'https://hooks.example.com/...',
+              isDense: true,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            FilledButton.tonalIcon(
+              onPressed: _busy || _url.text.trim().isEmpty ? null : () => _save(_url.text.trim()),
+              icon: const Icon(Icons.save, size: 15),
+              label: const Text('บันทึก'),
+            ),
+            const SizedBox(width: 8),
+            if (_enabled) ...[
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        try {
+                          await Api.instance.testNotifyWebhook();
+                          if (mounted) setState(() => _msg = 'ส่งทดสอบแล้ว — ไปดูในช่องแชท');
+                        } catch (e) {
+                          if (mounted) setState(() => _msg = '$e'.replaceFirst('Exception: ', ''));
+                        }
+                      },
+                icon: const Icon(Icons.send, size: 15),
+                label: const Text('ทดสอบ'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(onPressed: _busy ? null : () => _save(''), child: const Text('ปิด')),
+            ],
+          ]),
+          if (_msg != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_msg!, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+            ),
         ]),
       ),
     );

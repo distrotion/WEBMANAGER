@@ -34,6 +34,33 @@ async function swapCurrent(site, releaseDir, channel) {
   }
 }
 
+// CI stages: build then test, run in the repo before anything is published or
+// restarted. A failure here aborts the deploy while the previous version is
+// still serving — cheaper than the health gate, which only catches a bad build
+// AFTER the app has been swapped and has to be rolled back.
+// Empty setting = stage skipped, so existing sites are unaffected.
+async function ciStage(site, label, command, cwd, channel) {
+  const cmd = String(command || '').trim();
+  if (!cmd) return { ok: true, skipped: true };
+  emitLog(channel, `[${label}] ${cmd}`);
+  const r = await run(cmd, [], { cwd, channel, shell: true });
+  if (r.code !== 0) {
+    emitLog(channel, `[${label}] FAILED (exit ${r.code}) — deploy aborted, current version left running`);
+    return { ok: false };
+  }
+  emitLog(channel, `[${label}] passed`);
+  return { ok: true };
+}
+
+// Run both CI stages; returns the failing step name, or null when all passed.
+async function runCi(site, cwd, channel) {
+  const build = await ciStage(site, 'build', site.build_command, cwd, channel);
+  if (!build.ok) return 'build';
+  const test = await ciStage(site, 'test', site.test_command, cwd, channel);
+  if (!test.ok) return 'test';
+  return null;
+}
+
 function copyRelease(srcRepo, destRelease) {
   fs.mkdirSync(destRelease, { recursive: true });
   fs.cpSync(srcRepo, destRelease, {
@@ -72,6 +99,14 @@ async function deployStatic(site, user) {
     }
     commit = await git.currentCommit(site);
     source = git.repoDir(site);
+  }
+
+  // CI gate before publishing: a failing build/test leaves the live release untouched.
+  const ciFail = await runCi(site, source, channel);
+  if (ciFail) {
+    db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+    require('./notify').fire({ site: site.name, ok: false, step: ciFail, by: (user && user.username) || 'system' });
+    return { ok: false, step: ciFail };
   }
 
   const ts = tsName();
@@ -150,6 +185,16 @@ async function deployNode(site, user) {
     emitLog(channel, '[deploy] npm install --omit=dev');
     await run('npm', ['install', '--omit=dev'], { cwd: repoDir, channel, shell: true });
   }
+
+  // CI gate before restarting: catches a bad commit while the current process is
+  // still serving, instead of relying on the health gate + rollback afterwards.
+  const ciFail = await runCi(site, repoDir, channel);
+  if (ciFail) {
+    db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+    require('./notify').fire({ site: site.name, ok: false, step: ciFail, by: (user && user.username) || 'system' });
+    return { ok: false, step: ciFail };
+  }
+
   await pm2.restart(site, channel); // starts on first run
 
   // --- health gate: the new code must actually answer before we call it done.
@@ -179,11 +224,25 @@ async function deployNode(site, user) {
             ? `=== Rolled back to ${prev} — new commit failed health check ===`
             : '=== Rollback also unhealthy — manual attention needed ==='
         );
+        require('./notify').fire({
+          site: site.name,
+          ok: false,
+          step: 'health',
+          commit: prev,
+          rolledBack: again.ok,
+          by: (user && user.username) || 'system',
+        });
         return { ok: false, step: 'health', rolledBack: again.ok };
       }
     }
     db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
     emitLog(channel, '=== Deploy failed health check (no previous version to roll back to) ===');
+    require('./notify').fire({
+      site: site.name,
+      ok: false,
+      step: 'health',
+      by: (user && user.username) || 'system',
+    });
     return { ok: false, step: 'health' };
   }
 
@@ -207,4 +266,89 @@ async function deployNode(site, user) {
   return { ok: true, commit };
 }
 
-module.exports = { deployStatic, deployNode, swapCurrent, tsName };
+// Roll back on purpose (a button, not a health failure) to a release already in
+// the history. The two runtimes keep their versions in different places: a
+// static site has the actual files in releases/<ts>, so the junction just points
+// back; a node app runs straight from the repo, so we check out that commit and
+// reinstall. Either way the CI stages are NOT re-run — this version passed them
+// when it was first deployed, and re-running them could fail on a moved
+// dependency and leave the site with nothing to serve.
+async function rollbackTo(site, release, user) {
+  const channel = `site-${site.id}`;
+  emitLog(channel, `=== Rollback ${site.name} -> ${release.commit_hash || release.timestamp} ===`);
+
+  if (site.runtime === 'static') {
+    const releaseDir = path.join(config.paths.sites, site.name, 'releases', release.timestamp);
+    if (!fs.existsSync(releaseDir)) {
+      emitLog(channel, `[rollback] release folder is gone: releases/${release.timestamp}`);
+      return { ok: false, step: 'missing-release' };
+    }
+    await swapCurrent(site, releaseDir, channel);
+    nginx.writePortConf(site);
+    nginx.rebuildFront();
+    const t = await nginx.test(channel);
+    if (t.code !== 0) {
+      emitLog(channel, '[rollback] nginx -t failed');
+      return { ok: false, step: 'nginx-t' };
+    }
+    await nginx.reload(channel);
+    db.prepare(
+      `UPDATE sites SET status='running', current_release=?, last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
+    ).run(release.timestamp, release.commit_hash, site.id);
+  } else {
+    if (!release.commit_hash) {
+      emitLog(channel, '[rollback] this release has no commit recorded');
+      return { ok: false, step: 'no-commit' };
+    }
+    const dir = git.repoDir(site);
+    const r = await run(config.git.exe, ['-C', dir, 'reset', '--hard', release.commit_hash], {
+      channel,
+      env: git.gitEnv(),
+    });
+    if (r.code !== 0) {
+      emitLog(channel, '[rollback] git reset failed — is that commit still in the local repo?');
+      return { ok: false, step: 'git' };
+    }
+    if (fs.existsSync(path.join(dir, 'package.json'))) {
+      emitLog(channel, '[rollback] npm install --omit=dev');
+      await run('npm', ['install', '--omit=dev'], { cwd: dir, channel, shell: true });
+    }
+    await require('./pm2').restart(site, channel);
+    const health = await require('./health').waitHealthy(site, channel);
+    if (!health.ok) {
+      db.prepare('UPDATE sites SET status=? WHERE id=?').run('error', site.id);
+      emitLog(channel, '=== Rollback target is also unhealthy — manual attention needed ===');
+      require('./notify').fire({
+        site: site.name,
+        ok: false,
+        step: 'health',
+        commit: release.commit_hash,
+        by: (user && user.username) || 'system',
+      });
+      return { ok: false, step: 'health' };
+    }
+    db.prepare(
+      `UPDATE sites SET status='running', last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
+    ).run(release.commit_hash, site.id);
+  }
+
+  db.prepare('INSERT INTO releases (site_id, timestamp, commit_hash, deployed_by, note) VALUES (?,?,?,?,?)').run(
+    site.id,
+    tsName(),
+    release.commit_hash,
+    (user && user.username) || 'system',
+    `rollback to ${release.timestamp}`
+  );
+  audit(user, 'rollback-manual', site.name, release.commit_hash || release.timestamp);
+  require('./notify').fire({
+    site: site.name,
+    ok: true,
+    commit: release.commit_hash || release.timestamp,
+    rolledBack: true,
+    by: (user && user.username) || 'system',
+  });
+  emitLog(channel, `=== Rolled back (${release.commit_hash || release.timestamp}) ===`);
+  return { ok: true, commit: release.commit_hash };
+}
+
+module.exports = { deployStatic, deployNode, swapCurrent, tsName, rollbackTo, runCi };

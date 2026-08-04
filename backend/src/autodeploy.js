@@ -9,9 +9,8 @@ const git = require('./git');
 const settings = require('./settings');
 const deploy = require('./deploy');
 const { run } = require('./runner');
+const deploylock = require('./deploylock');
 const { emitLog } = require('./logbus');
-
-const inFlight = new Set(); // site ids currently deploying
 
 // Tip commit (full sha) of the site's branch on the remote, or null on failure.
 async function remoteHead(site) {
@@ -38,7 +37,7 @@ function sameCommit(a, b) {
 
 async function checkOne(site) {
   if (!site.autodeploy || site.source_type !== 'git' || !site.repo_url) return;
-  if (inFlight.has(site.id)) return;
+  if (deploylock.held(site.id)) return; // a manual deploy/rollback is running
   const channel = `site-${site.id}`;
   const remote = await remoteHead(site);
   if (!remote) return; // network / auth issue — try again next tick
@@ -53,7 +52,10 @@ async function checkOne(site) {
   if (last && !last.ok && /step health/.test(last.message || '') && sameCommit(remote, last.to_commit)) {
     return; // this exact commit already failed health — waiting for a fix commit
   }
-  inFlight.add(site.id);
+  // Take the shared lock only once we've decided to deploy — the manual button
+  // and rollback use the same one, so they can never overlap with this.
+  const releaseLock = deploylock.acquire(site.id, 'auto-deploy');
+  if (!releaseLock) return; // someone grabbed it between the check and here
   emitLog(channel, `[auto-deploy] new commit ${remote.slice(0, 8)} (deployed ${site.last_commit || 'none'}) — deploying`);
   let ok = true;
   let message = '';
@@ -72,7 +74,7 @@ async function checkOne(site) {
     message = e.message;
     emitLog(channel, `[auto-deploy] failed: ${e.message}`);
   } finally {
-    inFlight.delete(site.id);
+    releaseLock();
     try {
       db.prepare(
         `INSERT INTO autodeploy_log (site_id, site_name, from_commit, to_commit, ok, message)

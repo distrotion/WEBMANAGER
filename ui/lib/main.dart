@@ -14,6 +14,7 @@ import 'fleet.dart';
 import 'gateway.dart';
 import 'file_share.dart';
 import 'autodeploy_log.dart';
+import 'timefmt.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
 // so a backgrounded panel costs the server (almost) nothing.
@@ -736,6 +737,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   late String _source;
   late String _exposure;
   bool _autodeploy = false;
+  final _build = TextEditingController();
+  final _test = TextEditingController();
   String? _error;
   bool _busy = false;
 
@@ -759,6 +762,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _source = s['source_type'] ?? 'git';
       _exposure = s['exposure_mode'] ?? 'none';
       _autodeploy = s['autodeploy'] == 1;
+      _build.text = s['build_command']?.toString() ?? '';
+      _test.text = s['test_command']?.toString() ?? '';
     } else {
       // creating → prefill from remembered config
       _branch.text = _cfg['branch'] ?? 'main';
@@ -807,6 +812,8 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
         if (_runtime == 'node') 'env_json': _linesToEnvJson(_env.text),
         'direct_port': _port.text.trim().isNotEmpty ? int.tryParse(_port.text.trim()) : null,
         'autodeploy': (_source == 'git' && _autodeploy) ? 1 : 0,
+        'build_command': _build.text.trim(),
+        'test_command': _test.text.trim(),
         'exposure_mode': _exposure == 'none' ? null : _exposure,
         'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
         'domain': _exposure == 'path' ? _domain.text.trim() : null,
@@ -889,6 +896,47 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                     secondary: const Icon(Icons.sync),
                   ),
                 ],
+                const SizedBox(height: 12),
+                // CI stages — run in the source before anything is published or
+                // restarted, so a failing build/test never reaches the live site.
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.science_outlined, size: 20),
+                  title: const Text('CI: build & test before deploy', style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    _build.text.trim().isEmpty && _test.text.trim().isEmpty
+                        ? 'none — deploy publishes straight away'
+                        : 'runs before publishing; a failure aborts the deploy',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  children: [
+                    TextField(
+                      controller: _build,
+                      decoration: const InputDecoration(
+                        labelText: 'Build command (optional)',
+                        hintText: 'e.g. npm run build',
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _test,
+                      decoration: const InputDecoration(
+                        labelText: 'Test command (optional)',
+                        hintText: 'e.g. npm test',
+                        isDense: true,
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'Leave empty to skip. Non-zero exit = deploy aborted, the running version stays up.',
+                        style: TextStyle(fontSize: 11, color: Colors.white38),
+                      ),
+                    ),
+                  ],
+                ),
                 if (_source == 'local') ...[
                   const SizedBox(height: 8),
                   TextField(
@@ -1266,6 +1314,85 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     }
   }
 
+  // Roll back to a version that was deployed before. The list comes from the
+  // releases table; a static site keeps the actual files per release, a node app
+  // re-checks-out that commit.
+  Future<void> _pickRollback() async {
+    final id = s['id'] as int;
+    List<Map<String, dynamic>> rows;
+    try {
+      rows = await Api.instance.releases(id);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      return;
+    }
+    if (!mounted) return;
+    final older = rows.where((r) => r['current'] != true).toList();
+    if (older.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ยังไม่มีเวอร์ชันเก่าให้ย้อน — deploy อย่างน้อย 2 ครั้งก่อน')),
+      );
+      return;
+    }
+    final chosen = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Rollback to which version?'),
+        children: older.take(20).map((r) {
+          final commit = r['commit_hash']?.toString();
+          final note = r['note']?.toString();
+          return SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, r),
+            child: ListTile(
+              dense: true,
+              leading: const Icon(Icons.history, size: 18),
+              title: Text(commit?.isNotEmpty == true ? commit! : '${r['timestamp']}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+              subtitle: Text(
+                '${localTime(_relTime(r['timestamp']))} · by ${r['deployed_by'] ?? '?'}'
+                '${note != null && note.isNotEmpty ? ' · $note' : ''}',
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('ยืนยัน rollback'),
+        content: Text('ย้อนกลับไป ${chosen['commit_hash'] ?? chosen['timestamp']} ?\n\n'
+            'CI (build/test) จะไม่ถูกรันซ้ำ เพราะเวอร์ชันนี้เคยผ่านมาแล้ว'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('ยกเลิก')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Rollback')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await Api.instance.rollback(id, chosen['id'] as int);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Rollback started — ดู log ด้านล่าง')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  // releases.timestamp is 'YYYYMMDD-HHMMSS' local at deploy time; reshape it so
+  // localTime() (which expects the DB's 'YYYY-MM-DD HH:MM:SS') can render it.
+  String _relTime(dynamic ts) {
+    final t = ts?.toString() ?? '';
+    if (t.length != 15 || !t.contains('-')) return t;
+    return '${t.substring(0, 4)}-${t.substring(4, 6)}-${t.substring(6, 8)} '
+        '${t.substring(9, 11)}:${t.substring(11, 13)}:${t.substring(13, 15)}';
+  }
+
   Future<void> _editNoderedSettings() async {
     final restart = await showDialog<bool>(
       context: context,
@@ -1350,6 +1477,8 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
             _group(runLabel, [
               if (isStatic || runtime == 'node')
                 _btn('Pull & Deploy', Icons.cloud_download, () => _act('deploy')),
+              if (isStatic || runtime == 'node')
+                _btn('Rollback…', Icons.history, _pickRollback),
               if (isProcess) _btn('Start', Icons.play_arrow, () => _act('start')),
               if (isProcess) _btn('Restart', Icons.restart_alt, () => _act('restart')),
               if (isProcess) _btn('Stop', Icons.stop, () => _act('stop')),

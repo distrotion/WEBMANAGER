@@ -69,6 +69,48 @@ router.delete('/git-credentials/list/:id', guard.adminOnly, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Deploy notifications (webhook fired on deploy failure / rollback) ---
+router.get('/notify', guard.adminOnly, (req, res) => {
+  const url = settings.get('notify_webhook_url') || '';
+  // Return only whether it is set + the host, never the full URL: a webhook URL
+  // is itself a credential (anyone holding it can post into the channel).
+  let host = '';
+  try {
+    host = url ? new URL(url).host : '';
+  } catch {
+    host = 'invalid URL';
+  }
+  res.json({ enabled: !!url, host });
+});
+router.put('/notify', guard.adminOnly, (req, res) => {
+  const url = String((req.body && req.body.url) || '').trim();
+  if (!url) {
+    settings.del('notify_webhook_url');
+    require('../audit').audit(req.user, 'notify-webhook', 'clear');
+    return res.json({ enabled: false, host: '' });
+  }
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'webhook must be an http(s) URL' });
+  settings.set('notify_webhook_url', url);
+  require('../audit').audit(req.user, 'notify-webhook', 'set');
+  let host = '';
+  try {
+    host = new URL(url).host;
+  } catch {
+    host = '';
+  }
+  res.json({ enabled: true, host });
+});
+router.post('/notify/test', guard.adminOnly, async (req, res) => {
+  if (!settings.get('notify_webhook_url')) return res.status(400).json({ error: 'no webhook configured' });
+  await require('../notify').send({
+    site: 'test',
+    ok: false,
+    step: 'test',
+    by: (req.user && req.user.username) || 'admin',
+  });
+  res.json({ sent: true });
+});
+
 router.get('/requirements', async (req, res) => {
   try {
     res.json(await system.requirements());

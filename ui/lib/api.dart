@@ -313,6 +313,36 @@ class Api {
     await http.delete(_u('/api/gateways/token'), headers: _headers);
   }
 
+  // ---- deploy history / rollback ----
+  Future<List<Map<String, dynamic>>> releases(int siteId) async {
+    final r = await http.get(_u('/api/sites/$siteId/releases'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'releases failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> rollback(int siteId, int releaseId) async {
+    final r = await http.post(_u('/api/sites/$siteId/rollback/$releaseId'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'rollback failed');
+  }
+
+  // ---- deploy notifications (webhook) ----
+  Future<Map<String, dynamic>> notifyStatus() async {
+    final r = await http.get(_u('/api/system/notify'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('notify status failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> setNotifyWebhook(String url) async {
+    final r = await http.put(_u('/api/system/notify'), headers: _headers, body: jsonEncode({'url': url}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'save failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> testNotifyWebhook() async {
+    final r = await http.post(_u('/api/system/notify/test'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'test failed');
+  }
+
   // ---- File Share (read-only folder exposure, e.g. ML image pulls) ----
   /// Base origin of the server the UI was served from — used in the copy-paste
   /// curl example so it points at a real address, not the hub proxy path.

@@ -11,9 +11,14 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **Runtimes** — static Flutter web, **Node-RED** (auto-installs the shared runtime on
   first start; CORS + editor-login togglable), and Node backends managed by **PM2**
   (live CPU/RAM/status, PM2-list view, reboot-safe).
-- **CI/CD auto-deploy** — watch a git branch and Pull & Deploy automatically on new commits,
-  with a **post-deploy health check**: a node app must answer HTTP on its port or the deploy
-  **rolls back** to the previous commit automatically (status shows `rolled-back`).
+- **CI/CD** — watch a git branch and Pull & Deploy automatically on new commits, through a
+  full pipeline: **fetch → install → build → test → publish → health check → rollback**.
+  Optional per-site **build/test commands** run before anything is published, so a failing
+  commit never reaches the live site; after publishing, a node app must answer HTTP on its
+  port or the deploy **rolls back** to the previous version automatically (status
+  `rolled-back`). One deploy per site at a time (manual, watcher and rollback share a lock),
+  a **Rollback…** button to return to any earlier release, and an optional **webhook** that
+  fires on failure, rollback and recovery.
 - **Fleet (แม่/ลูก)** — one webmanager (hub) manages many others (agents): live fleet
   dashboard, and a server switcher that reroutes the whole panel (sites, deploy, logs,
   console) through the hub to any child. Children can self-register at the hub.
@@ -114,14 +119,17 @@ The backend serves the built UI itself, so one process = the whole panel.
 
 ## Using the panel
 1. **New site** — pick runtime + source (Git repo **or** Local folder, with a **Browse** picker),
-   a direct port, front exposure (subdomain/path), and branch (for git).
+   a direct port, front exposure (subdomain/path), branch (for git), and optionally
+   **CI: build & test** commands that must pass before a deploy publishes.
 2. **Pull & Deploy** (static/node) or **Start** (Node-RED) — watch the live console.
+   **Rollback…** returns to any earlier release (CI is not re-run — that version already passed).
 3. **Open** the site via its direct port or the TLS front (buttons on the site page).
 4. **Edit** a site anytime (branch/repo/source/port/exposure), then Pull & Deploy to apply.
 5. **Issue SSL**, **Reload nginx**, **Restart**, toggle the **direct port** (firewall auto).
 6. **Console** (admin) — a real shell in the site's folder or server-wide.
-7. **Account menu** (admin) — **Users**, **Fleet** (แม่/ลูก), **Remote Gateway**, change
-   password, requirements page (with **Port tools**: inspect / kill a port).
+7. **Account menu** (admin) — **Users**, **Fleet** (แม่/ลูก), **Remote Gateway**, **File Share**,
+   **Auto-deploy log**, change password, requirements page (with **Port tools**: inspect / kill
+   a port, and **Deploy notifications**: a webhook for failures and rollbacks).
 
 Login and the create-site form defaults are remembered across refreshes.
 
