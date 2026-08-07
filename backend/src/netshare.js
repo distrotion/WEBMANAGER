@@ -41,9 +41,50 @@ async function reachable(uncPath) {
   }
 }
 
-// Authenticate the SMB session for one share. The password goes in on stdin
-// (`net use ... *` prompts for it) so it never lands in the command line, where
-// any process on the machine could read it.
+// Turn `net use` output into something an operator can act on. Its own text is
+// unhelpful on its own — the first line is the password PROMPT (which contains
+// the word "password" and so is easy to mistake for the error), and the real
+// cause is a numeric code further down.
+const NET_ERRORS = {
+  5: 'the account authenticated but has no permission on this share — grant it in the share/NTFS permissions',
+  53: 'network path not found — check the server name/IP and that File and Printer Sharing is reachable',
+  67: 'share name not found on that server — check the part after the server name',
+  86: 'the username or password is wrong. If the file server is in a domain, use DOMAIN\\user; if it is standalone, try SERVERNAME\\user',
+  1219: 'a session to that server already exists under different credentials — disconnect it first',
+  1326: 'the username or password is wrong',
+  1327: 'the account is not allowed to log on (blank password or logon-hours/account restriction)',
+};
+
+function explain(out, code) {
+  const lines = String(out || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    // drop the interactive prompt — it is not an error and it mentions "password"
+    .filter((l) => !/^type the password/i.test(l));
+  const num = (String(out || '').match(/System error (\d+)/i) || [])[1];
+  const hint = num && NET_ERRORS[Number(num)];
+  const said = lines.find((l) => /^the |denied|not correct|not found/i.test(l)) || lines[0];
+  if (hint) return `${said || `System error ${num}`} — ${hint}`;
+  return said || `net use exited ${code}`;
+}
+
+// Authenticate the SMB session for one share.
+//
+// The password is passed as an argument, not on stdin. `net use ... *` prompts
+// by reading the console directly (CONIN$) rather than stdin, so a piped
+// password is silently ignored and an EMPTY one is submitted — which fails with
+// "System error 86, the specified network password is not correct", exactly as
+// if the password were wrong. Verified on Windows Server 2019: a credential that
+// mounts fine from Explorer failed every time through the pipe.
+//
+// Retrying stdin first and falling back would be worse than useless: each
+// attempt is a failed logon, and the reconciler runs every 60s, so a share with
+// an account-lockout policy would lock itself out. So: argument form only.
+//
+// Cost: the password is visible in that process's command line for the second or
+// so `net.exe` lives. Accepted — the alternative silently does not work, only
+// processes on this server can see it, and the log stream still redacts it.
 async function connectOne(share, channel = CHANNEL) {
   if (!isWindows()) {
     return { ok: false, error: 'network share credentials are a Windows feature (this host is ' + process.platform + ')' };
@@ -55,15 +96,13 @@ async function connectOne(share, channel = CHANNEL) {
   // Drop any half-open session first; a stale one makes `net use` fail with
   // "multiple connections to a server by the same user" (error 1219).
   await run('net', ['use', share.unc_path, '/delete', '/y'], { channel: 'silent' });
-  const r = await run('net', ['use', share.unc_path, '/user:' + share.username, '*'], {
+  // net use <share> <password> /user:<user> — password before /user, per the
+  // documented syntax.
+  const r = await run('net', ['use', share.unc_path, password, '/user:' + share.username], {
     channel,
     redact: password,
-    stdin: password + '\r\n',
   });
-  if (r.code !== 0) {
-    const detail = (r.out || '').split(/\r?\n/).find((l) => /error|denied|password|1219|53|67/i.test(l));
-    return { ok: false, error: (detail || `net use exited ${r.code}`).trim() };
-  }
+  if (r.code !== 0) return { ok: false, error: explain(r.out, r.code) };
   return { ok: true };
 }
 

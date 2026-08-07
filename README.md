@@ -204,9 +204,14 @@ starts working — **no change needed in any deployed app**.
   `password`. **Test** verifies a credential without saving it.
 - Use a **UNC path, never a drive letter** — `Z:\` is bound to a person's login session
   and is invisible to a service, whatever permissions you grant.
-- The password is **write-only**: no route ever returns it, it is stored AES-256-GCM
-  encrypted with a key derived from `JWT_SECRET` (which lives outside the database), and
-  it is passed to `net use` on **stdin** so it never appears in a command line.
+- The password is **write-only**: no route ever returns it, and it is stored AES-256-GCM
+  encrypted with a key derived from `JWT_SECRET` (which lives outside the database), so a
+  copied `webmanager.db` decrypts nothing on its own. It is passed to `net use` as an
+  argument — `net use ... *` reads its prompt from the console, not stdin, so a piped
+  password is silently ignored and an empty one is submitted instead (that fails as
+  "System error 86 … password is not correct", which looks exactly like a wrong password).
+  The log stream redacts it; the command line is visible on this server for the second or
+  so `net.exe` runs.
 - Sessions drop (idle, server reboot, network blip); a reconciler re-checks every 60s by
   actually reading the path and reconnects what is broken.
 
