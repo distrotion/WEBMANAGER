@@ -22,7 +22,15 @@ const { run } = require('./runner');
 const { emitLog } = require('./logbus');
 
 const CHANNEL = 'system';
-const state = new Map(); // id -> { ok, error, checkedAt }
+const state = new Map(); // id -> { ok, error, checkedAt, fails, nextTryAt }
+
+// How long to wait before trying a credential again, indexed by consecutive
+// failures. A wrong password replayed every 60s is dozens of failed logons an
+// hour against the file server, which is exactly how an account-lockout policy
+// gets tripped — by us. Reading the path is free and keeps happening every tick;
+// only the credentialed attempt backs off.
+const BACKOFF_MS = [0, 5 * 60_000, 15 * 60_000, 30 * 60_000];
+const backoffFor = (fails) => BACKOFF_MS[Math.min(fails, BACKOFF_MS.length - 1)];
 
 const isWindows = () => process.platform === 'win32';
 
@@ -145,32 +153,45 @@ async function connectOne(share, channel = CHANNEL) {
 // actually broken, so the normal case costs one access() per share.
 async function reconcile(channel = CHANNEL, { force = false } = {}) {
   for (const share of rows()) {
+    const prev = state.get(share.id) || {};
     if (!share.enabled) {
-      state.set(share.id, { ok: false, error: 'disabled', checkedAt: Date.now() });
+      state.set(share.id, { ok: false, error: 'disabled', checkedAt: Date.now(), fails: 0, nextTryAt: null });
       continue;
     }
+    // Free, credential-free check — always runs, even while backed off, so a
+    // share that comes back on its own is noticed immediately.
     if (!force && (await reachable(share.unc_path))) {
-      state.set(share.id, { ok: true, error: null, checkedAt: Date.now() });
+      state.set(share.id, { ok: true, error: null, checkedAt: Date.now(), fails: 0, nextTryAt: null });
       continue;
     }
+    // Hold off on replaying a credential that keeps being rejected. An explicit
+    // user action (force) always gets through and restarts the ladder.
+    if (!force && prev.nextTryAt && Date.now() < prev.nextTryAt) {
+      state.set(share.id, { ...prev, checkedAt: Date.now() });
+      continue;
+    }
+
     const res = await connectOne(share, channel);
     const ok = res.ok && (await reachable(share.unc_path));
-    state.set(share.id, {
-      ok,
-      error: ok ? null : res.error || 'connected but the path is still unreadable',
-      checkedAt: Date.now(),
-    });
-    emitLog(
-      channel,
-      ok
-        ? `[netshare] "${share.name}" ${share.unc_path} connected as ${share.username}`
-        : `[netshare] "${share.name}" ${share.unc_path} FAILED — ${state.get(share.id).error}`
-    );
+    const fails = ok ? 0 : force ? 1 : (prev.fails || 0) + 1;
+    const error = ok ? null : res.error || 'connected but the path is still unreadable';
+    const nextTryAt = ok ? null : Date.now() + backoffFor(fails);
+    state.set(share.id, { ok, error, checkedAt: Date.now(), fails, nextTryAt });
+    if (ok) {
+      emitLog(channel, `[netshare] "${share.name}" ${share.unc_path} connected as ${share.username}`);
+    } else {
+      const mins = Math.round(backoffFor(fails) / 60000);
+      emitLog(
+        channel,
+        `[netshare] "${share.name}" ${share.unc_path} FAILED (${fails}x) — ${error}` +
+          (mins ? ` — not retrying for ${mins} min, so a rejected credential is not replayed into a lockout` : '')
+      );
+    }
   }
 }
 
 function status(id) {
-  return state.get(id) || { ok: false, error: 'not checked yet', checkedAt: null };
+  return state.get(id) || { ok: false, error: 'not checked yet', checkedAt: null, fails: 0, nextTryAt: null };
 }
 
 // Verify a credential without saving it (the "Test" button).

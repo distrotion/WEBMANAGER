@@ -140,6 +140,15 @@ class _NetSharePageState extends State<NetSharePage> {
           Text('user: ${s['username']}', style: const TextStyle(fontSize: 11, color: Colors.white38)),
           if (!ok && err != null && err.isNotEmpty)
             Text(err, style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+          // Say so when a rejected credential is deliberately not being retried,
+          // otherwise a share just sits there looking ignored.
+          if (!ok && _waitMinutes(s['nextTryAt']) > 0)
+            Text(
+              'ลองใหม่อีกครั้งในอีก ~${_waitMinutes(s['nextTryAt'])} นาที '
+              '(ล้มเหลว ${s['fails'] ?? 0} ครั้ง — เว้นระยะไว้ ไม่ให้ยิงรหัสผิดซ้ำจนบัญชีโดนล็อก) '
+              '· กด 🔗 ด้านบนเพื่อลองทันที',
+              style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
+            ),
           if (ok && s['checkedAt'] != null)
             Text('ตรวจล่าสุด ${localTime(_msToDbUtc(s['checkedAt']))}',
                 style: const TextStyle(fontSize: 10, color: Colors.white24)),
@@ -152,6 +161,14 @@ class _NetSharePageState extends State<NetSharePage> {
       ),
     );
   }
+}
+
+/// Minutes until the backend will retry this credential, 0 if it is not waiting.
+int _waitMinutes(dynamic nextTryAt) {
+  final n = (nextTryAt is num) ? nextTryAt.toInt() : 0;
+  if (n == 0) return 0;
+  final ms = n - DateTime.now().millisecondsSinceEpoch;
+  return ms <= 0 ? 0 : (ms / 60000).ceil();
 }
 
 String _msToDbUtc(dynamic ms) {
