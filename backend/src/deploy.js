@@ -201,7 +201,22 @@ async function deployNode(site, user) {
   // On failure, roll back ONE step to the previously deployed commit (still in
   // the local git objects) and stop there — no cascading walk into history.
   const health = await require('./health').waitHealthy(site, channel);
-  if (!health.ok) {
+  // 'warn' mode: report the failure and leave the new version running. The
+  // operator asked to be told, not corrected — used to watch how the probe
+  // behaves for a site before trusting it to revert anything.
+  let warned = false;
+  if (!health.ok && health.mode === 'warn') {
+    warned = true;
+    emitLog(channel, '[health] NOT answering — site is set to "warn", so the new version is LEFT RUNNING (no rollback)');
+    require('./notify').fire({
+      site: site.name,
+      ok: false,
+      step: 'health-warn',
+      commit,
+      by: (user && user.username) || 'system',
+    });
+  }
+  if (!health.ok && !warned) {
     const prev = site.last_commit; // commit that was running before this deploy
     if (site.source_type === 'git' && prev) {
       emitLog(channel, `[rollback] health failed — rolling back to ${prev}`);
@@ -255,15 +270,18 @@ async function deployNode(site, user) {
   }
   // open the app's direct port in the firewall for LAN access
   if (site.direct_port) await require('./firewall').openPort(site.direct_port, channel);
+  // 'unhealthy' = deployed and left running, but the probe never got an answer
+  // (warn mode). Distinct from 'running' so it is visible, and from 'error' so
+  // it is clear the site was not taken down.
   db.prepare(
-    `UPDATE sites SET status='running', last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
-  ).run(commit, site.id);
+    `UPDATE sites SET status=?, last_commit=?, last_deploy_at=datetime('now') WHERE id=?`
+  ).run(warned ? 'unhealthy' : 'running', commit, site.id);
   db.prepare('INSERT INTO releases (site_id, timestamp, commit_hash, deployed_by) VALUES (?,?,?,?)').run(
     site.id, tsName(), commit, (user && user.username) || 'system'
   );
   audit(user, 'deploy', site.name, commit);
-  emitLog(channel, `=== Done (${commit || 'no-commit'}) ===`);
-  return { ok: true, commit };
+  emitLog(channel, `=== Done (${commit || 'no-commit'})${warned ? ' — health warning, see above' : ''} ===`);
+  return { ok: true, commit, warned };
 }
 
 // Roll back on purpose (a button, not a health failure) to a release already in

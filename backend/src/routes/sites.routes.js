@@ -32,10 +32,10 @@ router.post('/', guard.adminOnly, (req, res) => {
         `INSERT INTO sites
          (name, runtime, source_type, repo_url, local_path, branch, direct_port, direct_port_enabled,
           exposure_mode, subdomain, path, domain, ssl_enabled, service_name, entry_file, env_json, pm2_instances, autodeploy,
-          build_command, test_command)
+          build_command, test_command, health_check)
          VALUES (@name,@runtime,@source_type,@repo_url,@local_path,@branch,@direct_port,@direct_port_enabled,
           @exposure_mode,@subdomain,@path,@domain,@ssl_enabled,@service_name,@entry_file,@env_json,@pm2_instances,@autodeploy,
-          @build_command,@test_command)`
+          @build_command,@test_command,@health_check)`
       )
       .run({
         name: b.name,
@@ -58,6 +58,8 @@ router.post('/', guard.adminOnly, (req, res) => {
         autodeploy: b.autodeploy ? 1 : 0,
         build_command: b.build_command || null,
         test_command: b.test_command || null,
+        // opt-in per site; 'off' means the health gate never runs
+        health_check: b.health_check || 'off',
       });
     audit(req.user, 'create-site', b.name);
     res.status(201).json(getSite(info.lastInsertRowid));
@@ -86,6 +88,7 @@ const UPDATABLE = [
   'autodeploy',
   'build_command',
   'test_command',
+  'health_check',
 ];
 
 router.put('/:id', guard.adminOnly, (req, res) => {

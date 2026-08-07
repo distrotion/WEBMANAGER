@@ -13,6 +13,7 @@ import 'download.dart';
 import 'fleet.dart';
 import 'gateway.dart';
 import 'file_share.dart';
+import 'net_share.dart';
 import 'autodeploy_log.dart';
 import 'timefmt.dart';
 
@@ -232,6 +233,7 @@ class _SitesPageState extends State<SitesPage> {
       case 'errored':
         return Colors.red;
       case 'rolled-back': // old version restored after a failed deploy — needs a look
+      case 'unhealthy':   // deployed and still running, but never answered the probe
         return Colors.orange;
       default:
         return Colors.grey;
@@ -334,6 +336,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const GatewayPage()));
               } else if (v == 'fileshare') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FileSharePage()));
+              } else if (v == 'netshare') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NetSharePage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -366,6 +370,8 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'gateway', child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Remote Gateway (port forward)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'fileshare', child: ListTile(leading: Icon(Icons.folder_shared), title: Text('File Share (ให้ ML ดึงรูป)'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'netshare', child: ListTile(leading: Icon(Icons.drive_file_move), title: Text('Network share (รหัส file share)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)
@@ -739,6 +745,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
   bool _autodeploy = false;
   final _build = TextEditingController();
   final _test = TextEditingController();
+  String _healthCheck = 'off'; // off | warn | rollback — opt in per site
   String? _error;
   bool _busy = false;
 
@@ -764,6 +771,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
       _autodeploy = s['autodeploy'] == 1;
       _build.text = s['build_command']?.toString() ?? '';
       _test.text = s['test_command']?.toString() ?? '';
+      _healthCheck = s['health_check']?.toString() ?? 'off';
     } else {
       // creating → prefill from remembered config
       _branch.text = _cfg['branch'] ?? 'main';
@@ -814,6 +822,7 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
         'autodeploy': (_source == 'git' && _autodeploy) ? 1 : 0,
         'build_command': _build.text.trim(),
         'test_command': _test.text.trim(),
+        'health_check': _healthCheck,
         'exposure_mode': _exposure == 'none' ? null : _exposure,
         'subdomain': _exposure == 'subdomain' ? _subdomain.text.trim() : null,
         'domain': _exposure == 'path' ? _domain.text.trim() : null,
@@ -932,6 +941,33 @@ class _CreateSiteDialogState extends State<CreateSiteDialog> {
                       padding: EdgeInsets.only(top: 6),
                       child: Text(
                         'Leave empty to skip. Non-zero exit = deploy aborted, the running version stays up.',
+                        style: TextStyle(fontSize: 11, color: Colors.white38),
+                      ),
+                    ),
+                    const Divider(height: 22),
+                    // Health gate. OFF by default: the probe calls
+                    // 127.0.0.1:<port>, so an app that binds only to the LAN
+                    // address would look dead — never switch this on for a site
+                    // without checking it answers there first.
+                    DropdownButtonFormField<String>(
+                      initialValue: _healthCheck,
+                      isDense: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Health check after deploy (node apps)',
+                        isDense: true,
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'off', child: Text('ปิด — ไม่ตรวจ (ค่าเริ่มต้น)')),
+                        DropdownMenuItem(value: 'warn', child: Text('เตือน — ตรวจ + แจ้ง แต่ไม่ย้อนกลับ')),
+                        DropdownMenuItem(value: 'rollback', child: Text('ย้อนกลับ — ตรวจแล้วถอยอัตโนมัติถ้าไม่ตอบ')),
+                      ],
+                      onChanged: (v) => setState(() => _healthCheck = v ?? 'off'),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'ตรวจโดยเรียก http://127.0.0.1:<direct port> — ถ้า app bind เฉพาะ IP วง LAN '
+                        'จะดูเหมือนตาย ให้ลองโหมด "เตือน" ก่อนเสมอ',
                         style: TextStyle(fontSize: 11, color: Colors.white38),
                       ),
                     ),

@@ -107,6 +107,14 @@ function port(v, label) {
   return null;
 }
 
+// Health-gate mode. Anything unrecognised would silently disable the gate, so
+// reject it rather than guess.
+const HEALTH_MODES = new Set(['off', 'warn', 'rollback']);
+function healthMode(v) {
+  if (v === null || v === undefined || v === '') return null;
+  return HEALTH_MODES.has(String(v).toLowerCase()) ? null : 'health_check must be off, warn or rollback';
+}
+
 // pm2_instances becomes a `-i <n>` argument to the pm2 CLI.
 function count(v, label) {
   if (v === null || v === undefined || v === '') return null;
@@ -136,6 +144,7 @@ function siteFields(b, { requireName } = {}) {
     nginxField(b.path, 'path'),
     port(b.direct_port, 'direct_port'),
     count(b.pm2_instances, 'pm2_instances'),
+    healthMode(b.health_check),
   ];
   return checks.find(Boolean) || null;
 }
@@ -150,5 +159,6 @@ module.exports = {
   nginxField,
   port,
   count,
+  healthMode,
   siteFields,
 };
