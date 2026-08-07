@@ -25,6 +25,9 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **Remote Gateway** — raw-TCP port forwarders (tunnel HTTP/WS/TLS to any host:port).
 - **File Share** — expose a server folder as a **read-only** download tree so an
   external job (e.g. an ML pipeline pulling QC images to train) can list + fetch files.
+- **Network share credentials** — store a user/password for `\\server\share` so the
+  backends this manager launches can read it. They run as LocalSystem, which has no
+  identity on the network, so a UNC path is otherwise unreadable to them.
 - **Port tools** — inspect and kill whatever holds a port, from the panel.
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
 - **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
@@ -185,6 +188,31 @@ curl -s -H "x-api-token: $TOKEN" "$BASE/api/shares/$SHARE/list?recursive=1"
 curl -s -H "x-api-token: $TOKEN" "$BASE/api/shares/$SHARE/file?path=2026-07/img001.jpg" -o img001.jpg
 ```
 
+## Network share credentials (SMB)
+
+**Account menu → Network share** (admin). Solves a specific Windows problem: the
+manager and every app it launches through PM2 run as **LocalSystem**, which has no user
+identity on the network — it reaches a file server as the machine account, or
+anonymously in a workgroup. So a backend opening `\\server\share\images` gets *access
+denied* even though the same path opens fine in the operator's own Explorer session.
+
+Store the share's credentials here and the manager authenticates the SMB session itself.
+The deployed apps share that LocalSystem logon, so a plain `fs.readFile` on the UNC path
+starts working — **no change needed in any deployed app**.
+
+- Fields: `name`, `unc_path` (`\\server\share`), `username` (`DOMAIN\user` or `user`),
+  `password`. **Test** verifies a credential without saving it.
+- Use a **UNC path, never a drive letter** — `Z:\` is bound to a person's login session
+  and is invisible to a service, whatever permissions you grant.
+- The password is **write-only**: no route ever returns it, it is stored AES-256-GCM
+  encrypted with a key derived from `JWT_SECRET` (which lives outside the database), and
+  it is passed to `net use` on **stdin** so it never appears in a command line.
+- Sessions drop (idle, server reboot, network blip); a reconciler re-checks every 60s by
+  actually reading the path and reconnects what is broken.
+
+Alternative if the machines are domain-joined: grant the server's **machine account**
+(`DOMAIN\SERVERNAME$`) access on the share instead, and store no password at all.
+
 ## Fleet — one hub, many servers (แม่/ลูก)
 
 **Account menu → Fleet** (admin). Set each server's role:
@@ -205,7 +233,7 @@ update.cmd / update.ps1  quick update (swap code + restart, no reinstall)
 backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
             firewall, PM2/NSSM process control, win-acme, WebSocket logs + shell (pty),
             autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward),
-            shares (read-only file share), ports
+            shares (read-only file share), netshare (SMB credentials), ports
 ui/         Flutter web control panel
 deploy/     install.ps1, uninstall.ps1, install-nodered.ps1, bundled tools\nssm.exe
 scripts/    start/stop/status for macOS/Linux + Windows

@@ -313,6 +313,39 @@ class Api {
     await http.delete(_u('/api/gateways/token'), headers: _headers);
   }
 
+  // ---- network share credentials (SMB) ----
+  Future<List<Map<String, dynamic>>> netShares() async {
+    final r = await http.get(_u('/api/netshares'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'netshares failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createNetShare(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/netshares'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateNetShare(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/netshares/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteNetShare(int id) async {
+    await http.delete(_u('/api/netshares/$id'), headers: _headers);
+  }
+
+  Future<List<Map<String, dynamic>>> reconnectNetShares() async {
+    final r = await http.post(_u('/api/netshares/reconnect'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('reconnect failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  /// Try a credential without saving it. Returns {ok, error?}.
+  Future<Map<String, dynamic>> testNetShare(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/netshares/test'), headers: _headers, body: jsonEncode(body));
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
   // ---- deploy history / rollback ----
   Future<List<Map<String, dynamic>>> releases(int siteId) async {
     final r = await http.get(_u('/api/sites/$siteId/releases'), headers: _headers);

@@ -36,6 +36,9 @@ require('./autodeploy').start();
 // Remote Gateway: open raw-TCP forwarders for enabled gateways.
 require('./gateway').start();
 
+// Authenticate stored network shares so deployed apps can read them (Windows).
+require('./netshare').start();
+
 const app = express();
 // The panel is served from this same origin and every other consumer (the ML
 // share puller, the fleet hub) is a server-side HTTP client, which CORS does not
@@ -64,6 +67,7 @@ app.use('/api/fleet', authMiddleware, require('./routes/fleet.routes'));
 // gateway + shares routes do their own auth (loopback / x-api-token / admin login)
 app.use('/api/gateways', require('./routes/gateway.routes'));
 app.use('/api/shares', require('./routes/shares.routes'));
+app.use('/api/netshares', authMiddleware, require('./routes/netshares.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));

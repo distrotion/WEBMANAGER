@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS gateways (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS net_shares (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  unc_path     TEXT UNIQUE NOT NULL,       -- \\\\server\\share (what apps open)
+  username     TEXT NOT NULL,              -- DOMAIN\\user or user
+  password_enc TEXT NOT NULL,              -- AES-256-GCM, key from JWT_SECRET
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS shares (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
@@ -129,6 +139,11 @@ for (const [col, def] of [
   ['autodeploy', 'INTEGER DEFAULT 0'],
   ['build_command', 'TEXT'],
   ['test_command', 'TEXT'],
+  // off | warn | rollback — OFF by default, opt in per site. The probe calls
+  // 127.0.0.1:<direct_port>, and an app that binds only to the LAN address would
+  // look dead and be rolled back for no reason, so this must never switch itself
+  // on for a site the operator has not checked.
+  ['health_check', "TEXT DEFAULT 'off'"],
 ]) {
   try {
     db.prepare(`ALTER TABLE sites ADD COLUMN ${col} ${def}`).run();
