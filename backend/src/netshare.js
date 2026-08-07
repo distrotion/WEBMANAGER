@@ -77,12 +77,14 @@ function explain(out, code) {
 // the demand is normally an interactive logon, so on a server nobody is signed
 // in to it just stays stopped. Start it ourselves; `sc start` on an already
 // running service exits non-zero and is harmless, so the result is ignored.
-let credentialServiceChecked = false;
-async function ensureCredentialService(channel) {
-  if (!isWindows() || credentialServiceChecked) return;
-  credentialServiceChecked = true;
+//
+// Run this before EVERY connect, not once per process: VaultSvc stops itself
+// again once idle. An established mount keeps working, so nothing looks wrong
+// until the next connect — which then fails with 1312 all over again. Connects
+// only happen when a share is already broken, so the cost is negligible.
+async function ensureCredentialService() {
+  if (!isWindows()) return;
   await run('sc', ['start', 'VaultSvc'], { channel: 'silent' });
-  emitLog(channel, '[netshare] ensured the Credential Manager service (VaultSvc) is running');
 }
 
 // Authenticate the SMB session for one share.
@@ -156,12 +158,22 @@ function status(id) {
 }
 
 // Verify a credential without saving it (the "Test" button).
+//
+// Connecting tears down any existing session to that path first, so a failed
+// test would otherwise leave a working share disconnected. Always put the saved
+// configuration back afterwards.
 async function test({ unc_path, username, password }) {
   const share = { name: 'test', unc_path, username, password_enc: secretbox.encrypt(password) };
-  const r = await connectOne(share);
-  if (!r.ok) return r;
-  if (await reachable(unc_path)) return { ok: true };
-  return { ok: false, error: 'authenticated, but the path is still unreadable — check the share/NTFS permissions' };
+  try {
+    const r = await connectOne(share);
+    if (!r.ok) return r;
+    if (await reachable(unc_path)) return { ok: true };
+    return { ok: false, error: 'authenticated, but the path is still unreadable — check the share/NTFS permissions' };
+  } finally {
+    // Re-establish whatever is stored; a probe must not leave the server worse
+    // off than it found it.
+    reconcile('silent', { force: true }).catch(() => {});
+  }
 }
 
 function start() {
