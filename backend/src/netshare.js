@@ -26,6 +26,12 @@ const state = new Map(); // id -> { ok, error, checkedAt }
 
 const isWindows = () => process.platform === 'win32';
 
+// '\\\\server\\share\\sub' -> 'server'
+function serverOf(uncPath) {
+  const m = String(uncPath || '').match(/^\\\\([^\\/]+)/);
+  return m ? m[1] : null;
+}
+
 function rows() {
   return db.prepare('SELECT * FROM net_shares ORDER BY name').all();
 }
@@ -111,13 +117,23 @@ async function connectOne(share, channel = CHANNEL) {
   if (password === null) {
     return { ok: false, error: 'stored password could not be decrypted — re-enter it' };
   }
-  await ensureCredentialService(channel);
+  // Authenticate against the SERVER (its IPC$ pipe), not the individual share.
+  // SMB keeps one session per server, so this single login covers every share on
+  // it — and mounting a named share directly turned out to be unreliable: on a
+  // real host `net use \\srv\Sign_Pic <pw>` failed with 1312 every time while
+  // `net use \\srv\SQLBackups_LC <pw>` with the same account succeeded, and once
+  // any share had authenticated, reading \\srv\Sign_Pic worked fine. IPC$ exists
+  // on every Windows host and is what SMB uses for session setup, so it avoids
+  // whatever the named share objected to.
+  const server = serverOf(share.unc_path);
+  if (!server) return { ok: false, error: 'unc_path must look like \\\\server\\share' };
+  const ipc = `\\\\${server}\\IPC$`;
+
+  await ensureCredentialService();
   // Drop any half-open session first; a stale one makes `net use` fail with
   // "multiple connections to a server by the same user" (error 1219).
-  await run('net', ['use', share.unc_path, '/delete', '/y'], { channel: 'silent' });
-  // net use <share> <password> /user:<user> — password before /user, per the
-  // documented syntax.
-  const r = await run('net', ['use', share.unc_path, password, '/user:' + share.username], {
+  await run('net', ['use', ipc, '/delete', '/y'], { channel: 'silent' });
+  const r = await run('net', ['use', ipc, password, '/user:' + share.username], {
     channel,
     redact: password,
   });

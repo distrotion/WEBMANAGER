@@ -212,6 +212,11 @@ starts working — **no change needed in any deployed app**.
   "System error 86 … password is not correct", which looks exactly like a wrong password).
   The log stream redacts it; the command line is visible on this server for the second or
   so `net.exe` runs.
+- Authentication targets the server's `IPC$`, not the named share. SMB keeps **one session
+  per server**, so that single login covers every share on it — and mounting a named share
+  directly proved unreliable: on a real host one share failed with *1312* every time while
+  another on the same server accepted the same account, and once any share had
+  authenticated the first one read fine.
 - Sessions drop (idle, server reboot, network blip); a reconciler re-checks every 60s by
   actually reading the path and reconnects what is broken.
 - The manager starts the **Credential Manager service (VaultSvc)** first. Windows refuses
