@@ -51,6 +51,7 @@ const NET_ERRORS = {
   67: 'share name not found on that server — check the part after the server name',
   86: 'the username or password is wrong. If the file server is in a domain, use DOMAIN\\user; if it is standalone, try SERVERNAME\\user',
   1219: 'a session to that server already exists under different credentials — disconnect it first',
+  1312: 'Windows could not create a logon session for this credential — the Credential Manager service (VaultSvc) is usually stopped on a server nobody signs in to. The manager starts it automatically; if this persists, start it by hand: sc start VaultSvc',
   1326: 'the username or password is wrong',
   1327: 'the account is not allowed to log on (blank password or logon-hours/account restriction)',
 };
@@ -67,6 +68,21 @@ function explain(out, code) {
   const said = lines.find((l) => /^the |denied|not correct|not found/i.test(l)) || lines[0];
   if (hint) return `${said || `System error ${num}`} — ${hint}`;
   return said || `net use exited ${code}`;
+}
+
+// Windows will not give a LocalSystem service a network logon session with
+// alternate credentials unless the Credential Manager service is running: every
+// method fails with 1312 (ERROR_NO_SUCH_LOGON_SESSION) — net use with explicit
+// credentials, cmdkey, and New-SmbMapping alike. VaultSvc starts on demand, and
+// the demand is normally an interactive logon, so on a server nobody is signed
+// in to it just stays stopped. Start it ourselves; `sc start` on an already
+// running service exits non-zero and is harmless, so the result is ignored.
+let credentialServiceChecked = false;
+async function ensureCredentialService(channel) {
+  if (!isWindows() || credentialServiceChecked) return;
+  credentialServiceChecked = true;
+  await run('sc', ['start', 'VaultSvc'], { channel: 'silent' });
+  emitLog(channel, '[netshare] ensured the Credential Manager service (VaultSvc) is running');
 }
 
 // Authenticate the SMB session for one share.
@@ -93,6 +109,7 @@ async function connectOne(share, channel = CHANNEL) {
   if (password === null) {
     return { ok: false, error: 'stored password could not be decrypted — re-enter it' };
   }
+  await ensureCredentialService(channel);
   // Drop any half-open session first; a stale one makes `net use` fail with
   // "multiple connections to a server by the same user" (error 1219).
   await run('net', ['use', share.unc_path, '/delete', '/y'], { channel: 'silent' });

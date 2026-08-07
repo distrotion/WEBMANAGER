@@ -214,6 +214,11 @@ starts working — **no change needed in any deployed app**.
   so `net.exe` runs.
 - Sessions drop (idle, server reboot, network blip); a reconciler re-checks every 60s by
   actually reading the path and reconnects what is broken.
+- The manager starts the **Credential Manager service (VaultSvc)** first. Windows refuses
+  to give a LocalSystem service a logon session for alternate credentials while it is
+  stopped — every method fails with *1312, a specified logon session does not exist* — and
+  it stays stopped on a server nobody signs in to, because an interactive logon is what
+  normally starts it.
 
 Alternative if the machines are domain-joined: grant the server's **machine account**
 (`DOMAIN\SERVERNAME$`) access on the share instead, and store no password at all.
