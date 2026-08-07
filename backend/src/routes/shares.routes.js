@@ -16,6 +16,7 @@ const express = require('express');
 const db = require('../db');
 const shares = require('../shares');
 const settings = require('../settings');
+const config = require('../config');
 const { audit } = require('../audit');
 const { verifyAnyToken } = require('../auth');
 
@@ -55,11 +56,38 @@ router.get('/', manageOnly, (req, res) => {
   res.json(db.prepare('SELECT * FROM shares ORDER BY name').all());
 });
 
+// A share hands its whole tree to the read-only api-token, which is by design
+// given to outside jobs. So the root must never be able to reach the manager's
+// own secrets: backend/.env, data/webmanager.db and data/jwt.secret. That last
+// file is the key secretbox derives from, so exposing it would decrypt every
+// stored SMB password AND allow forging an admin JWT — a read-only image token
+// would become full control.
+//
+// Rejected: the root IS the manager root, sits inside it, or contains it (e.g.
+// C:\ or /). Publishing something the manager merely deployed — ROOT/sites/... —
+// is still allowed, since that is only a copy of the app's own files.
+function insideManagerRoot(root) {
+  const norm = (p) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const r = norm(root);
+  const managerRoot = norm(config.ROOT);
+  const sites = norm(path.join(config.ROOT, 'sites'));
+  if (r === sites || r.startsWith(sites + path.sep)) return null; // deployed apps are fine
+  if (r === managerRoot) return 'root_path may not be the webmanager root itself — it holds the database, the JWT secret and .env';
+  if (r.startsWith(managerRoot + path.sep)) {
+    return 'root_path may not point inside the webmanager root — it holds the database, the JWT secret and .env';
+  }
+  if (managerRoot.startsWith(r + path.sep)) {
+    return 'root_path contains the webmanager root, which would expose the database, the JWT secret and .env — pick a narrower folder';
+  }
+  return null;
+}
+
 function validate(b) {
   const name = String(b.name || '').trim();
   const root = String(b.root_path || '').trim();
   if (!name || !root) return 'name and root_path required';
   if (!path.isAbsolute(root)) return 'root_path must be an absolute path';
+  if (/[\r\n\0]/.test(root)) return 'root_path may not contain newlines';
   let st;
   try {
     st = fs.statSync(root);
@@ -67,7 +95,15 @@ function validate(b) {
     return `folder not found: ${root}`;
   }
   if (!st.isDirectory()) return 'root_path is not a folder';
-  return null;
+  // Resolve symlinks before the containment check, or a link into the data dir
+  // would walk straight past it.
+  let real = root;
+  try {
+    real = fs.realpathSync(root);
+  } catch {
+    /* fall back to the literal path */
+  }
+  return insideManagerRoot(real);
 }
 
 router.post('/', manageOnly, (req, res) => {

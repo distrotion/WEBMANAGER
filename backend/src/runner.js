@@ -4,7 +4,11 @@ const { emitLog } = require('./logbus');
 
 // Spawn a command and stream stdout/stderr line-by-line to the given log channel.
 // Resolves with { code, out } — never rejects, so callers can branch on exit code.
-// `redact` (a secret string) is masked in everything shown/streamed to the log.
+// `redact` (a secret string) is masked BOTH in what is streamed to the log and in
+// the returned `out`. Masking only the stream was a leak: a caller that builds an
+// error message out of `out` and logs it puts the secret straight back into the
+// log it was redacted from — and net.exe echoes an argument it fails to parse
+// (a password starting with `-` or `/`) into its own error text.
 // `stdin` is written to the child then closed — use it for secrets, so they never
 // appear in the command line (which any process on the box can read).
 function run(cmd, args, { cwd, channel = 'system', env, redact, shell, stdin } = {}) {
@@ -23,7 +27,7 @@ function run(cmd, args, { cwd, channel = 'system', env, redact, shell, stdin } =
       });
     } catch (e) {
       emitLog(channel, mask(`[error] ${e.message}`));
-      return resolve({ code: -1, error: e.message, out: '' });
+      return resolve({ code: -1, error: mask(e.message), out: '' });
     }
     if (stdin !== undefined && child.stdin) {
       child.stdin.on('error', () => {
@@ -33,15 +37,15 @@ function run(cmd, args, { cwd, channel = 'system', env, redact, shell, stdin } =
     }
     let out = '';
     const onData = (buf) => {
-      const s = buf.toString();
+      const s = mask(buf.toString()); // mask once, at the boundary
       out += s;
-      for (const line of s.split(/\r?\n/)) if (line.length) emitLog(channel, mask(line));
+      for (const line of s.split(/\r?\n/)) if (line.length) emitLog(channel, line);
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     child.on('error', (e) => {
-      emitLog(channel, `[error] ${e.message}`);
-      resolve({ code: -1, error: e.message, out });
+      emitLog(channel, mask(`[error] ${e.message}`));
+      resolve({ code: -1, error: mask(e.message), out });
     });
     child.on('close', (code) => {
       emitLog(channel, `[exit ${code}]`);

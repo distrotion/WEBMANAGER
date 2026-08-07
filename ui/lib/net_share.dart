@@ -27,8 +27,24 @@ class _NetSharePageState extends State<NetSharePage> {
   Future<void> _reconnect() async {
     setState(() => _busy = true);
     try {
-      await Api.instance.reconnectNetShares();
-      _reload();
+      // The route returns the refreshed list, so use it rather than firing a
+      // second GET — and say what happened either way: this is the operator's
+      // main recovery button and it used to fail in complete silence.
+      final rows = await Api.instance.reconnectNetShares();
+      final bad = rows.where((r) => r['ok'] != true && r['enabled'] == true).toList();
+      setState(() => _future = Future.value(rows));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(bad.isEmpty
+              ? 'เชื่อมต่อครบทุก share ✓'
+              : 'ยังต่อไม่ได้ ${bad.length} รายการ: ${bad.map((r) => r['name']).join(', ')}'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('เชื่อมต่อใหม่ไม่สำเร็จ: $e')));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

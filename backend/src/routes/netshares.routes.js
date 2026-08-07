@@ -26,7 +26,7 @@ const view = (s) => ({
   ...netshare.status(s.id),
 });
 
-function validate(b, { requirePassword }) {
+function validate(b, { requirePassword, id, skipClash }) {
   const name = String(b.name || '').trim();
   const unc = String(b.unc_path || '').trim();
   const user = String(b.username || '').trim();
@@ -35,7 +35,25 @@ function validate(b, { requirePassword }) {
     return 'unc_path must look like \\\\server\\share (a mapped drive letter cannot be used — it is per-login-session and invisible to a service)';
   }
   if (/[\r\n\0]/.test(unc) || /[\r\n\0]/.test(user)) return 'value may not contain newlines';
-  if (requirePassword && !String(b.password || '')) return 'password required';
+  const pw = String(b.password || '');
+  if (requirePassword && !pw) return 'password required';
+  // net.exe takes the password as a positional argument, so one starting with a
+  // switch character is parsed as an option and echoed back in its own error.
+  if (pw && /^[-/]/.test(pw)) return 'password may not start with "-" or "/" (Windows would read it as a command-line switch)';
+  if (pw && /[\r\n\0]/.test(pw)) return 'password may not contain newlines';
+  // SMB holds one session per server, so two enabled shares on the same host
+  // must use the same account or they evict each other on every pass. Not
+  // enforced for the Test button — trying a different account before switching
+  // to it is exactly what that button is for.
+  if (skipClash) return null;
+  const server = netshare.serverOf(unc);
+  const clash = db
+    .prepare('SELECT name, username, unc_path FROM net_shares WHERE enabled=1 AND id != ?')
+    .all(id || 0)
+    .find((r) => netshare.serverOf(r.unc_path || '') === server && r.username.toLowerCase() !== user.toLowerCase());
+  if (clash) {
+    return `"${clash.name}" already uses ${server} as ${clash.username}. Windows allows one account per server, so both shares must use the same one.`;
+  }
   return null;
 }
 
@@ -72,7 +90,7 @@ router.put('/:id', async (req, res) => {
   // An empty password field means "keep the stored one" — the UI cannot show it
   // back, so it must not be forced to resend it on every edit.
   const merged = { name: b.name ?? row.name, unc_path: b.unc_path ?? row.unc_path, username: b.username ?? row.username };
-  const err = validate(merged, { requirePassword: false });
+  const err = validate({ ...merged, password: b.password }, { requirePassword: false, id: row.id });
   if (err) return res.status(400).json({ error: err });
   db.prepare('UPDATE net_shares SET name=?, unc_path=?, username=?, password_enc=?, enabled=? WHERE id=?').run(
     String(merged.name).trim(),
@@ -83,14 +101,24 @@ router.put('/:id', async (req, res) => {
     row.id
   );
   audit(req.user, 'netshare-update', merged.name);
+  // Switching a share off has to revoke, not just relabel it — otherwise the UI
+  // shows a paused icon over a path that is still fully readable.
+  const nowDisabled = 'enabled' in b && !b.enabled;
+  if (nowDisabled && row.enabled) {
+    await netshare.disconnectIfUnused(netshare.serverOf(row.unc_path), { exceptId: row.id }).catch(() => {});
+  }
   await netshare.reconcile('system', { force: true }).catch(() => {});
   res.json(view(db.prepare('SELECT * FROM net_shares WHERE id=?').get(row.id)));
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const row = db.prepare('SELECT * FROM net_shares WHERE id=?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   db.prepare('DELETE FROM net_shares WHERE id=?').run(row.id);
+  netshare.forget(row.id);
+  // Revoke for real: the SMB session belongs to the LocalSystem logon, not to
+  // this process, so without this the access outlives the row until a reboot.
+  await netshare.disconnectIfUnused(netshare.serverOf(row.unc_path), { exceptId: row.id }).catch(() => {});
   audit(req.user, 'netshare-delete', row.name);
   res.json({ ok: true });
 });
@@ -104,7 +132,7 @@ router.post('/reconnect', async (req, res) => {
 // Try a credential without storing it.
 router.post('/test', async (req, res) => {
   const b = req.body || {};
-  const err = validate(b, { requirePassword: true });
+  const err = validate(b, { requirePassword: true, skipClash: true });
   if (err) return res.status(400).json({ error: err });
   const r = await netshare.test({
     unc_path: String(b.unc_path).trim(),
