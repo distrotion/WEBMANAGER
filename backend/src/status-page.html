@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>สถานะระบบ</title>
+<!--
+  Deliberately a plain page, not part of the Flutter app: it needs no login, no
+  token handling and no auth code path that could be got wrong, and it loads
+  instantly on a wall-mounted screen instead of pulling a multi-megabyte bundle.
+  It shows only what /api/public/status returns, which is an explicit whitelist.
+-->
+<script>
+  // Applied before first paint so switching themes never flashes the old one.
+  try { document.documentElement.dataset.theme = localStorage.getItem('wm_status_theme') || 'night'; } catch (e) {}
+</script>
+<style>
+  /* Three looks, same set as the panel's Monitor page. A status board lives on a
+     wall for months: bright rooms wash out the dark one, night shifts get glare
+     from the light one. Every colour below is a variable so the markup never
+     needs to know which theme is active. */
+  :root, :root[data-theme="night"] {
+    --bg: #0f1419; --card: #1a2027; --line: #232c36;
+    --text: #e6edf3; --dim: #8b98a5;
+    --up: #3fb950; --down: #f85149; --pause: #6e7681;
+    --up-bg: rgba(63,185,80,.15); --down-bg: rgba(248,81,73,.15);
+  }
+  :root[data-theme="light"] {
+    --bg: #f1f5f9; --card: #ffffff; --line: #dde5ee;
+    --text: #0f172a; --dim: #64748b;
+    --up: #15803d; --down: #dc2626; --pause: #94a3b8;
+    --up-bg: rgba(21,128,61,.12); --down-bg: rgba(220,38,38,.12);
+  }
+  :root[data-theme="dusk"] {
+    --bg: #2b2440; --card: #372f4e; --line: #453b60;
+    --text: #ede9fe; --dim: #a99fc4;
+    --up: #4ade80; --down: #fb7185; --pause: #7c6f99;
+    --up-bg: rgba(74,222,128,.15); --down-bg: rgba(251,113,133,.15);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", sans-serif;
+    padding: 24px;
+  }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .summary { display: flex; gap: 14px; font-size: 14px; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+  .pill.up { background: var(--up-bg); color: var(--up); }
+  .pill.down { background: var(--down-bg); color: var(--down); }
+  .updated { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .themes { display: flex; gap: 4px; }
+  .themes button {
+    background: none; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .themes button[aria-pressed="true"] { border-color: var(--text); color: var(--text); }
+  .grid { display: grid; gap: 10px; }
+  .row {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; display: grid; gap: 8px;
+    grid-template-columns: 12px 1fr auto; align-items: center;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.up { background: var(--up); } .dot.down { background: var(--down); } .dot.pause { background: var(--pause); }
+  .name { font-weight: 600; font-size: 15px; }
+  .up-pct { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  .bar { grid-column: 1 / -1; display: flex; gap: 2px; align-items: flex-end; height: 22px; }
+  .beat { flex: 1; min-width: 3px; max-width: 8px; height: 100%; border-radius: 2px; }
+  .beat.ok { background: var(--up); } .beat.bad { background: var(--down); }
+  .empty { color: var(--dim); font-size: 12px; }
+  .msg { color: var(--dim); text-align: center; padding: 48px 12px; }
+  @media (max-width: 600px) { body { padding: 14px; } h1 { font-size: 17px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>สถานะระบบ</h1>
+  <div class="summary" id="summary"></div>
+  <div class="updated" id="updated"></div>
+  <div class="themes" id="themes">
+    <button type="button" data-theme="light">สว่าง</button>
+    <button type="button" data-theme="dusk">พลบค่ำ</button>
+    <button type="button" data-theme="night">กลางคืน</button>
+  </div>
+</header>
+<div class="grid" id="grid"></div>
+<div class="msg" id="msg">กำลังโหลด…</div>
+
+<script>
+const el = (id) => document.getElementById(id);
+
+// ---- theme ----
+function setTheme(name) {
+  document.documentElement.dataset.theme = name;
+  try { localStorage.setItem('wm_status_theme', name); } catch (e) {/* private mode */}
+  el('themes').querySelectorAll('button').forEach(function (b) {
+    b.setAttribute('aria-pressed', String(b.dataset.theme === name));
+  });
+}
+el('themes').addEventListener('click', function (ev) {
+  const b = ev.target.closest('button');
+  if (b) setTheme(b.dataset.theme);
+});
+setTheme(document.documentElement.dataset.theme || 'night');
+
+function timeAgo(ts) {
+  if (!ts) return 'ยังไม่เคยตรวจ';
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return s + ' วินาทีที่แล้ว';
+  if (s < 3600) return Math.round(s / 60) + ' นาทีที่แล้ว';
+  return Math.round(s / 3600) + ' ชั่วโมงที่แล้ว';
+}
+
+function render(d) {
+  el('msg').style.display = 'none';
+  el('summary').innerHTML =
+    '<span class="pill up">ปกติ ' + d.up + '</span>' +
+    (d.down ? '<span class="pill down">มีปัญหา ' + d.down + '</span>' : '');
+  el('updated').textContent = 'อัปเดต ' + new Date(d.updatedAt).toLocaleTimeString('th-TH');
+
+  el('grid').innerHTML = d.monitors.map(function (m) {
+    const cls = m.paused ? 'pause' : (m.up === true ? 'up' : (m.up === false ? 'down' : 'pause'));
+    const beats = (m.beats || []).map(function (b) {
+      return '<div class="beat ' + (b.ok ? 'ok' : 'bad') + '" title="' +
+        new Date(b.ts).toLocaleString('th-TH') + '"></div>';
+    }).join('');
+    const u = m.uptime || {};
+    const pct = function (v) { return v === null || v === undefined ? '—' : v + '%'; };
+    return '<div class="row">' +
+      '<div class="dot ' + cls + '"></div>' +
+      '<div><div class="name"></div><div class="up-pct">' +
+        (m.paused ? 'หยุดตรวจชั่วคราว' : timeAgo(m.checkedAt)) + '</div></div>' +
+      '<div class="up-pct">24ชม. ' + pct(u.d1) + ' · 7วัน ' + pct(u.d7) + ' · 30วัน ' + pct(u.d30) + '</div>' +
+      '<div class="bar">' + (beats || '<span class="empty">ยังไม่มีประวัติ</span>') + '</div>' +
+    '</div>';
+  }).join('');
+
+  // Names come from operator input — set them as text, never as HTML, so a
+  // monitor named with markup can never inject into this page.
+  const nodes = el('grid').querySelectorAll('.name');
+  d.monitors.forEach(function (m, i) { if (nodes[i]) nodes[i].textContent = m.name; });
+
+  if (!d.monitors.length) {
+    el('msg').textContent = 'ยังไม่มีรายการที่เปิดให้แสดงสาธารณะ';
+    el('msg').style.display = '';
+  }
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/public/status', { cache: 'no-store' });
+    if (r.status === 404) {
+      el('grid').innerHTML = '';
+      el('msg').textContent = 'หน้าสถานะสาธารณะยังไม่ถูกเปิดใช้งาน';
+      el('msg').style.display = '';
+      return;
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    el('msg').textContent = 'เชื่อมต่อไม่ได้ — จะลองใหม่อัตโนมัติ';
+    el('msg').style.display = '';
+  }
+}
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

@@ -12,7 +12,13 @@ const { emitLog } = require('./logbus');
 
 // Slack/Discord/Teams all render a plain `text` field; extra keys are ignored by
 // them and available to a custom receiver.
+//
+// A caller that already has its own message (monitor.js: "monitor DOWN: ...")
+// passes `event.text` directly instead of the deploy-shaped {site,step,commit}
+// fields below — this is the one shared entry point for every kind of alert in
+// the app, not a deploy-only notifier.
 function payload(event) {
+  if (event.text) return { ...event, text: `[${event.host}] ${event.text}` };
   const icon = event.ok ? '✅' : event.rolledBack ? '↩️' : '❌';
   const what = event.ok
     ? `recovered — now on ${event.commit || 'latest'}`

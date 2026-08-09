@@ -39,6 +39,13 @@ require('./gateway').start();
 // Authenticate stored network shares so deployed apps can read them (Windows).
 require('./netshare').start();
 
+// Message queue: recover expired leases and age out the dead-letter pile.
+require('./mq').start();
+
+// Uptime monitoring: probe every configured HTTP/TCP/database target on its
+// own interval and alert on state transitions.
+require('./monitor').start();
+
 const app = express();
 // The panel is served from this same origin and every other consumer (the ML
 // share puller, the fleet hub) is a server-side HTTP client, which CORS does not
@@ -58,6 +65,12 @@ app.get('/api/health', (req, res) =>
   res.json({ ok: true, version: require('./version') })
 );
 
+// Public status page — no authentication by design. Gated twice inside the
+// router: a settings switch (off by default, 404 when off) and a per-monitor
+// opt-in flag. It exposes an explicit whitelist of fields, never a monitor row.
+app.use('/api/public', require('./routes/public.routes'));
+app.get('/status', (req, res) => res.sendFile(path.join(__dirname, 'status-page.html')));
+
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/users', authMiddleware, require('./routes/users.routes'));
 app.use('/api/logs', authMiddleware, require('./routes/logs.routes'));
@@ -67,7 +80,10 @@ app.use('/api/fleet', authMiddleware, require('./routes/fleet.routes'));
 // gateway + shares routes do their own auth (loopback / x-api-token / admin login)
 app.use('/api/gateways', require('./routes/gateway.routes'));
 app.use('/api/shares', require('./routes/shares.routes'));
+// mq does its own auth too (x-api-token for unattended producers/consumers)
+app.use('/api/mq', require('./routes/mq.routes'));
 app.use('/api/netshares', authMiddleware, require('./routes/netshares.routes'));
+app.use('/api/monitors', authMiddleware, require('./routes/monitors.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));

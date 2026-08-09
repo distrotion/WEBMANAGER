@@ -313,6 +313,75 @@ class Api {
     await http.delete(_u('/api/gateways/token'), headers: _headers);
   }
 
+  // ---- message queue ----
+  // Every call here goes through a logged-in session, so it lands on the
+  // management plane; the api-token exists for scripts, not for this panel.
+  Future<List<Map<String, dynamic>>> mqQueues() async {
+    final r = await http.get(_u('/api/mq/queues'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'queues failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createQueue(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/mq/queues'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
+  }
+
+  Future<Map<String, dynamic>> updateQueue(String name, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/mq/q/$name'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
+  }
+
+  Future<void> deleteQueue(String name) async {
+    final r = await http.delete(_u('/api/mq/q/$name'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'delete failed');
+  }
+
+  Future<List<Map<String, dynamic>>> peekQueue(String name, {String state = 'ready', int limit = 20}) async {
+    final r = await http.get(_u('/api/mq/q/$name/peek?state=$state&limit=$limit'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'peek failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<int> purgeQueue(String name, {String? state}) async {
+    final r = await http.post(_u('/api/mq/q/$name/purge'),
+        headers: _headers, body: jsonEncode({if (state != null) 'state': state}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'purge failed');
+    return (jsonDecode(r.body)['removed'] as num).toInt();
+  }
+
+  Future<int> requeueDead(String name) async {
+    final r = await http.post(_u('/api/mq/q/$name/dead/requeue'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'requeue failed');
+    return (jsonDecode(r.body)['requeued'] as num).toInt();
+  }
+
+  /// Publish from the panel — for trying a pipeline end to end without waiting
+  /// on the real producer.
+  Future<Map<String, dynamic>> publishMessage(String name, String body) async {
+    final r = await http.post(_u('/api/mq/q/$name/messages'), headers: _headers, body: jsonEncode({'body': body}));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'publish failed');
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
+  }
+
+  Future<bool> mqHasToken() async {
+    final r = await http.get(_u('/api/mq/token'), headers: _headers);
+    if (r.statusCode != 200) return false;
+    return jsonDecode(r.body)['hasToken'] == true;
+  }
+
+  Future<String> genMqToken() async {
+    final r = await http.post(_u('/api/mq/token'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'token failed');
+    return jsonDecode(r.body)['token'] as String;
+  }
+
+  Future<void> revokeMqToken() async {
+    await http.delete(_u('/api/mq/token'), headers: _headers);
+  }
+
   // ---- network share credentials (SMB) ----
   Future<List<Map<String, dynamic>>> netShares() async {
     final r = await http.get(_u('/api/netshares'), headers: _headers);
@@ -344,6 +413,81 @@ class Api {
   Future<Map<String, dynamic>> testNetShare(Map<String, dynamic> body) async {
     final r = await http.post(_u('/api/netshares/test'), headers: _headers, body: jsonEncode(body));
     return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  // ---- uptime monitoring ----
+  Future<List<Map<String, dynamic>>> monitors() async {
+    final r = await http.get(_u('/api/monitors'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'monitors failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createMonitor(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/monitors'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateMonitor(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/monitors/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteMonitor(int id) async {
+    await http.delete(_u('/api/monitors/$id'), headers: _headers);
+  }
+
+  Future<void> runMonitor(int id) async {
+    final r = await http.post(_u('/api/monitors/$id/run'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'run failed');
+  }
+
+  /// Try a monitor config without saving it. Returns {ok, ms?, error?}.
+  Future<Map<String, dynamic>> testMonitor(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/monitors/test'), headers: _headers, body: jsonEncode(body));
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Auto-create an HTTP monitor for every site with a direct port. Idempotent.
+  Future<Map<String, dynamic>> monitorsFromSites() async {
+    final r = await http.post(_u('/api/monitors/from-sites'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Every recorded run of one monitor over the last [days], newest first —
+  /// the history a once-a-day check exists to produce.
+  Future<Map<String, dynamic>> monitorReport(int id, {int days = 30}) async {
+    final r = await http.get(_u('/api/monitors/$id/report?days=$days'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'report failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Report as CSV bytes (auth header attached; a plain link cannot send one).
+  Future<List<int>> monitorReportCsv(int id, {int days = 30}) async {
+    final r = await http.get(_u('/api/monitors/$id/report?days=$days&format=csv'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('download failed (${r.statusCode})');
+    return r.bodyBytes;
+  }
+
+  /// Public status page: {enabled, count of monitors flagged public}.
+  Future<Map<String, dynamic>> publicPageStatus() async {
+    final r = await http.get(_u('/api/monitors/public-page'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Flip the public flag on every monitor at once. Returns {changed, public}.
+  Future<Map<String, dynamic>> setAllPublic(bool isPublic) async {
+    final r = await http.put(_u('/api/monitors/public-all'),
+        headers: _headers, body: jsonEncode({'public': isPublic}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> setPublicPage(bool enabled) async {
+    final r = await http.put(_u('/api/monitors/public-page'),
+        headers: _headers, body: jsonEncode({'enabled': enabled}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'failed');
   }
 
   // ---- deploy history / rollback ----

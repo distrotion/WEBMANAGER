@@ -14,6 +14,8 @@ import 'fleet.dart';
 import 'gateway.dart';
 import 'file_share.dart';
 import 'net_share.dart';
+import 'monitor.dart';
+import 'mq.dart';
 import 'autodeploy_log.dart';
 import 'timefmt.dart';
 
@@ -338,6 +340,10 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FileSharePage()));
               } else if (v == 'netshare') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NetSharePage()));
+              } else if (v == 'monitor') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MonitorPage()));
+              } else if (v == 'mq') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MqPage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -372,6 +378,13 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'fileshare', child: ListTile(leading: Icon(Icons.folder_shared), title: Text('File Share (ให้ ML ดึงรูป)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'netshare', child: ListTile(leading: Icon(Icons.drive_file_move), title: Text('Network share (รหัส file share)'), dense: true)),
+              // Not admin-gated: guard.js keeps the 'user' role useful as a
+              // monitoring view, and this page IS that view.
+              const PopupMenuItem(value: 'monitor', child: ListTile(leading: Icon(Icons.monitor_heart), title: Text('Monitor (เฝ้าดูสถานะ)'), dense: true)),
+              // Admin-gated: every management route on /api/mq refuses a
+              // non-admin, so a 'user' would open a page of 403s.
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'mq', child: ListTile(leading: Icon(Icons.low_priority), title: Text('Message Queue (คิวข้อมูล)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)
