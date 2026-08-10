@@ -393,6 +393,35 @@ async function probe(cfg) {
 
 // ---- transition / alert ---------------------------------------------------
 
+// A database check that is being REJECTED (as opposed to unreachable) must not
+// keep hammering the login. netshare.js learned this the hard way: a domain
+// account replaying a wrong password gets locked out, and at the 30s floor a
+// database monitor would try 2,880 times a day. The irony is direct — this
+// monitor type exists because a rejected login is invisible to a port check,
+// and left unthrottled it becomes the thing that locks the account.
+//
+// Only credential REJECTION backs off. A refused connection or a timeout means
+// the server is down, and that must keep being checked at the normal interval
+// so recovery is noticed promptly.
+// Indexed by how many rejections there have been PAST the monitor's own
+// fail_threshold. Backing off from the very first rejection would delay the
+// alert by the length of the ladder — with the default threshold of 3 the
+// operator would learn about a wrong password twenty minutes late. So the first
+// fail_threshold attempts run at the normal interval (the alert fires on time),
+// and only after the monitor is already declared down does it stop hammering,
+// since a rejected credential needs a human either way. An operator who sets
+// fail_threshold to 1 gets the strict behaviour with no extra knob.
+const AUTH_BACKOFF_MS = [0, 5 * 60_000, 15 * 60_000, 30 * 60_000];
+const authBackoffFor = (rejectionsPastThreshold) =>
+  AUTH_BACKOFF_MS[Math.min(Math.max(0, rejectionsPastThreshold), AUTH_BACKOFF_MS.length - 1)];
+
+// Driver wording differs per engine: mssql "Login failed for user"/ELOGIN,
+// postgres "password authentication failed for user", mongodb "Authentication
+// failed."
+function isAuthRejection(error) {
+  return /login failed|authentication failed|ELOGIN|not authorized|auth(?:entication)? error/i.test(String(error || ''));
+}
+
 function humanDuration(ms) {
   const m = Math.round(ms / 60000);
   if (m < 60) return `${m}m`;
@@ -413,6 +442,9 @@ function recordResult(m, result, prev) {
   if (!exists) return;
 
   const fails = ok ? 0 : (prev.fails || 0) + 1;
+  // Counted separately from `fails`: that one drives the up/down badge, this one
+  // only decides how long to wait before offering the same credential again.
+  const authFails = !ok && isAuthRejection(error) ? (prev.authFails || 0) + 1 : 0;
   // Debounce: a single blip does not flip the badge or fire an alert — only
   // fail_threshold CONSECUTIVE failures count as "down". Recovery is immediate
   // on the first success, same asymmetry as the netshare backoff ladder (an
@@ -423,7 +455,7 @@ function recordResult(m, result, prev) {
 
   const changed = prev.up !== up && (up === true || up === false);
   const lastChangeAt = changed ? now : prev.lastChangeAt || now;
-  setState(m.id, { up, ok, ms: result.ms ?? null, error, checkedAt: now, fails, lastChangeAt, running: false });
+  setState(m.id, { up, ok, ms: result.ms ?? null, error, checkedAt: now, fails, authFails, lastChangeAt, running: false });
 
   // A brand-new monitor's first-ever result is never a transition worth
   // announcing AS a transition, but the two directions differ: settling on
@@ -477,7 +509,13 @@ async function runCheck(m) {
     const st = state.get(m.id);
     if (st && st.running) setState(m.id, { running: false });
     if (monitorExists.get(m.id)) {
-      setState(m.id, { nextDueAt: nextDue(m) });
+      // Never earlier than the normal schedule; later while a credential keeps
+      // being rejected. The "run now" button calls in here directly and does not
+      // consult nextDueAt, so an operator who has just fixed the password is
+      // never made to wait out the ladder.
+      const authFails = (state.get(m.id) || {}).authFails || 0;
+      const wait = authBackoffFor(authFails - (m.fail_threshold || 3) + 1);
+      setState(m.id, { nextDueAt: Math.max(nextDue(m), Date.now() + wait) });
     }
   }
 }
@@ -572,5 +610,5 @@ module.exports = {
   // on a broken target, or a nightly job runs at the wrong hour. Exported so
   // test/monitor.test.js can drive them directly instead of trying to infer
   // them from a live check.
-  _internal: { evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration },
+  _internal: { evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration, isAuthRejection, authBackoffFor },
 };

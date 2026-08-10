@@ -24,6 +24,7 @@ const net = require('net');
 const { section, ok, eq, done } = require('./_harness');
 const monitor = require('../src/monitor');
 const secretbox = require('../src/secretbox');
+const db = require('../src/db');
 
 const PG = Number(process.env.WM_TEST_PG_PORT || 15432);
 const PG2 = Number(process.env.WM_TEST_PG2_PORT || 15433);
@@ -161,6 +162,60 @@ const mongoCfg = (extra) => ({
     // ("เว้นว่างได้ถ้า mongo ไม่ตั้ง auth") — บันทึกพฤติกรรมนี้ไว้ให้ชัด
     const anon = await monitor.probe(mongoCfg({}));
     ok('ไม่ใส่ credential = ตรวจแค่ว่าเซิร์ฟเวอร์ยังมีชีวิต', anon.ok === true, anon.error);
+  }
+
+  section('ถอยห่างจริงเมื่อรหัสถูกปฏิเสธซ้ำ (กัน account ถูกล็อก)');
+  if (!havePg) {
+    console.log(`    – ข้าม: ต้องมี PostgreSQL ที่ :${PG} เพื่อให้เกิดการปฏิเสธ credential จริง`);
+  } else {
+    const mk = (fields) => {
+      const cols = Object.keys(fields);
+      const info = db
+        .prepare(`INSERT INTO monitors (${cols.join(',')}) VALUES (${cols.map((c) => `@${c}`).join(',')})`)
+        .run(fields);
+      return db.prepare('SELECT * FROM monitors WHERE id=?').get(info.lastInsertRowid);
+    };
+
+    const wrong = mk({
+      name: 'รหัสผิด', type: 'postgres', host: '127.0.0.1', port: PG,
+      username: PG_USER, password_enc: enc('รหัสไม่ถูกแน่นอน'), database_name: 'postgres',
+      interval_sec: 30, timeout_ms: 5000, fail_threshold: 3, enabled: 1,
+    });
+    const mins = () => Math.round((monitor.status(wrong.id).nextDueAt - Date.now()) / 60000);
+    const secs = () => Math.round((monitor.status(wrong.id).nextDueAt - Date.now()) / 1000);
+
+    // fail_threshold = 3 → สามครั้งแรกต้องยิงตามรอบปกติ ไม่งั้นการแจ้งเตือนจะช้าไป 20 นาที
+    await monitor.runCheck(wrong);
+    ok('ครั้งที่ 1 ยังเช็คตามรอบปกติ', secs() <= 35, `อีก ${secs()}s`);
+    await monitor.runCheck(wrong);
+    ok('ครั้งที่ 2 ยังเช็คตามรอบปกติ', secs() <= 35, `อีก ${secs()}s`);
+    await monitor.runCheck(wrong);
+    ok('ครั้งที่ 3 (ครบ threshold แล้ว = แจ้งเตือนไปแล้ว) เริ่มถอย ~5 นาที', mins() >= 4 && mins() <= 6, `อีก ${mins()} นาที`);
+    eq('และตอนนี้ขึ้นแดงจริง', monitor.status(wrong.id).up, false);
+    await monitor.runCheck(wrong);
+    ok('ครั้งที่ 4 ถอยไป ~15 นาที', mins() >= 14 && mins() <= 16, `อีก ${mins()} นาที`);
+    await monitor.runCheck(wrong);
+    ok('ครั้งที่ 5 ถอยไป ~30 นาที', mins() >= 29 && mins() <= 31, `อีก ${mins()} นาที`);
+    await monitor.runCheck(wrong);
+    ok('เพดานอยู่ที่ 30 นาที ไม่โตต่อ', mins() >= 29 && mins() <= 31, `อีก ${mins()} นาที`);
+
+    // เครื่องล่มคนละเรื่องกับรหัสผิด — ต้องเช็คถี่เหมือนเดิม จะได้รู้ทันทีที่กลับมา
+    const dead = mk({
+      name: 'เครื่องล่ม', type: 'postgres', host: '127.0.0.1', port: 15499,
+      username: PG_USER, password_enc: enc(PG_PASS), database_name: 'postgres',
+      interval_sec: 30, timeout_ms: 3000, fail_threshold: 3, enabled: 1,
+    });
+    for (let i = 0; i < 5; i++) await monitor.runCheck(dead);
+    const deadWait = monitor.status(dead.id).nextDueAt - Date.now();
+    ok('ต่อไม่ได้ = ไม่ถอย ยังเช็คทุก 30s', deadWait < 40_000, `อีก ${Math.round(deadWait / 1000)}s`);
+
+    // แก้รหัสให้ถูกแล้วกดเช็คเดี๋ยวนี้ — ต้องกลับมาปกติทันที ไม่ต้องรอครบบันได
+    db.prepare('UPDATE monitors SET password_enc=? WHERE id=?').run(enc(PG_PASS), wrong.id);
+    await monitor.runCheck(db.prepare('SELECT * FROM monitors WHERE id=?').get(wrong.id));
+    const fixed = monitor.status(wrong.id);
+    ok('แก้รหัสถูกแล้ว = เขียวทันที', fixed.up === true, fixed.error || '');
+    ok('และกลับมาเช็คตามรอบปกติ', fixed.nextDueAt - Date.now() < 40_000,
+      `อีก ${Math.round((fixed.nextDueAt - Date.now()) / 1000)}s`);
   }
 
   section('พอร์ตที่ไม่มีอะไรฟัง');

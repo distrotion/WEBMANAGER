@@ -30,21 +30,35 @@ setInterval(runPrune, 60 * 60 * 1000).unref();
 // Restore PM2-managed apps after a reboot (best effort).
 require('./pm2').ensureUp().catch(() => {});
 
+// Background subsystems. Each is started behind its own guard: this manager is
+// what the operator uses to deploy and restart everything else, so a monitoring
+// or queue subsystem failing at boot must degrade to "that feature is off",
+// never to a crash-looping service with no panel and no way to deploy a fix.
+// The failure is logged loudly instead of being swallowed.
+function startSubsystem(name, fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.error(`[webmanager] ${name} failed to start: ${e.message}`);
+    logbus.emitLog('system', `[${name}] เริ่มไม่สำเร็จ: ${e.message} — ส่วนอื่นของ panel ยังทำงานปกติ`);
+  }
+}
+
 // CI/CD: poll git remotes and auto-deploy sites that have autodeploy enabled.
-require('./autodeploy').start();
+startSubsystem('autodeploy', () => require('./autodeploy').start());
 
 // Remote Gateway: open raw-TCP forwarders for enabled gateways.
-require('./gateway').start();
+startSubsystem('gateway', () => require('./gateway').start());
 
 // Authenticate stored network shares so deployed apps can read them (Windows).
-require('./netshare').start();
+startSubsystem('netshare', () => require('./netshare').start());
 
 // Message queue: recover expired leases and age out the dead-letter pile.
-require('./mq').start();
+startSubsystem('mq', () => require('./mq').start());
 
 // Uptime monitoring: probe every configured HTTP/TCP/database target on its
 // own interval and alert on state transitions.
-require('./monitor').start();
+startSubsystem('monitor', () => require('./monitor').start());
 
 const app = express();
 // The panel is served from this same origin and every other consumer (the ML

@@ -10,7 +10,10 @@ const { section, ok, eq, wait, until, fakeServer, done } = require('./_harness')
 const monitor = require('../src/monitor');
 const settings = require('../src/settings');
 const db = require('../src/db');
-const { evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration } = monitor._internal;
+const {
+  evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration,
+  isAuthRejection, authBackoffFor,
+} = monitor._internal;
 
 function makeMonitor(fields) {
   const cols = Object.keys(fields);
@@ -113,6 +116,20 @@ function makeMonitor(fields) {
   eq('ระยะเวลาแบบอ่านง่าย: นาที', humanDuration(5 * 60000), '5m');
   eq('ระยะเวลาแบบอ่านง่าย: ชั่วโมง', humanDuration(90 * 60000), '1h30m');
   eq('ระยะเวลาแบบอ่านง่าย: วัน', humanDuration(26 * 3600000), '1d2h');
+
+  section('ถอยห่างเมื่อ credential ถูกปฏิเสธ (กัน account ถูกล็อก)');
+  // ที่ 30s ขั้นต่ำ monitor ที่รหัสผิดจะยิง login 2,880 ครั้ง/วัน — พอที่จะทำให้
+  // domain account ถูกล็อก ซึ่งเป็นสิ่งที่ monitor ตัวนี้มีไว้เพื่อ "ตรวจเจอ" ไม่ใช่ "ทำให้เกิด"
+  ok('มองออกว่าเป็น mssql login failed', isAuthRejection("Login failed for user 'sa'."));
+  ok('มองออกว่าเป็น postgres', isAuthRejection('password authentication failed for user "wmadmin"'));
+  ok('มองออกว่าเป็น mongodb', isAuthRejection('Authentication failed.'));
+  ok('มองออกว่าเป็น ELOGIN', isAuthRejection('ELOGIN: connection error'));
+  // เครื่องล่มต้องเช็คถี่เหมือนเดิม จะได้รู้ทันทีที่มันกลับมา
+  ok('ต่อไม่ได้ = ไม่ใช่เรื่อง credential', isAuthRejection('connect ECONNREFUSED 10.0.0.5:5432') === false);
+  ok('timeout = ไม่ใช่เรื่อง credential', isAuthRejection('check did not return in time') === false);
+  ok('query ไม่ผ่านเงื่อนไข = ไม่ใช่เรื่อง credential', isAuthRejection('check failed: got 3, expected eq 0') === false);
+  ok('ไม่มี error = ไม่ใช่', isAuthRejection(null) === false);
+  eq('บันไดถอย', [0, 1, 2, 3, 9].map((n) => authBackoffFor(n) / 60000), [0, 5, 15, 30, 30]);
 
   // ---- live transitions ---------------------------------------------------
   section('สถานะจริง: ขึ้น → ล่ม → ฟื้น และการแจ้งเตือน');
