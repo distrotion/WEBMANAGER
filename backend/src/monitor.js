@@ -237,6 +237,8 @@ function firstCellPg(res) {
 // "lte 5" means "allowed to be 5 rows behind"; anything else compares for exact
 // equality (0 = identical, 1 = different) so a checksum or a string still works
 // with the natural "eq 0".
+const where = (host, port) => (port ? `${host}:${port}` : `${host}`);
+
 function judgeComparison(m, a, b, ms) {
   const na = Number(a);
   const nb = Number(b);
@@ -247,8 +249,14 @@ function judgeComparison(m, a, b, ms) {
   return {
     ok: false,
     ms,
+    // Name each side by host:port when a port is known — comparing two
+    // instances on one host is a legitimate setup, and "127.0.0.1=1000 vs
+    // 127.0.0.1=997" tells the reader nothing. The port is optional for
+    // database types (the driver has a default), so leave it out when unset
+    // rather than printing "host:null".
     error:
-      `ข้อมูลไม่ตรงกัน: ${m.host}=${JSON.stringify(a)} vs ${m.compare_host}=${JSON.stringify(b)}` +
+      `ข้อมูลไม่ตรงกัน: ${where(m.host, m.port)}=${JSON.stringify(a)}` +
+      ` vs ${where(m.compare_host, m.compare_port || m.port)}=${JSON.stringify(b)}` +
       ` (ต่างกัน ${diff}, เงื่อนไข ${m.expect_op} ${m.expect_value})`,
   };
 }
@@ -290,12 +298,12 @@ async function mssqlCheck(m, timeoutMs) {
   return judgeQueryResult(m, value, Date.now() - t0);
 }
 
-async function postgresCheck(m, timeoutMs) {
+// Run one query against one PostgreSQL host and return its first cell.
+async function postgresQuery(m, host, port, timeoutMs) {
   const { Client } = requireDriver('pg');
-  const t0 = Date.now();
   const client = new Client({
-    host: m.host,
-    port: m.port || 5432,
+    host,
+    port: port || 5432,
     user: m.username || undefined,
     password: monitorPassword(m),
     database: m.database_name || 'postgres',
@@ -305,10 +313,28 @@ async function postgresCheck(m, timeoutMs) {
   try {
     await client.connect();
     const res = await client.query(m.check_query || 'SELECT 1');
-    return judgeQueryResult(m, m.check_query ? firstCellPg(res) : 1, Date.now() - t0);
+    return m.check_query ? firstCellPg(res) : 1;
   } finally {
     await client.end().catch(() => {});
   }
+}
+
+async function postgresCheck(m, timeoutMs) {
+  const t0 = Date.now();
+  if (m.compare_host) {
+    // Same shape as mssqlCheck: both sides in parallel, judged on the
+    // difference. Without this branch a Postgres drift monitor saves happily
+    // and then only ever queries the first host — judging one server's number
+    // against a condition written for a difference, which passes or fails for
+    // reasons that have nothing to do with whether the two agree.
+    const [a, b] = await Promise.all([
+      postgresQuery(m, m.host, m.port, timeoutMs),
+      postgresQuery(m, m.compare_host, m.compare_port || m.port, timeoutMs),
+    ]);
+    return judgeComparison(m, a, b, Date.now() - t0);
+  }
+  const value = await postgresQuery(m, m.host, m.port, timeoutMs);
+  return judgeQueryResult(m, value, Date.now() - t0);
 }
 
 async function mongoCheck(m, timeoutMs) {

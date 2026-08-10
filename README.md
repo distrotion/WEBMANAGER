@@ -28,6 +28,22 @@ A web control panel to deploy and manage many web apps behind **nginx** on
 - **Network share credentials** — store a user/password for `\\server\share` so the
   backends this manager launches can read it. They run as LocalSystem, which has no
   identity on the network, so a UNC path is otherwise unreadable to them.
+- **Monitor** — watch a URL, a bare TCP port, or a database that must accept a real
+  **login** (MSSQL / PostgreSQL / MongoDB). A database holds its port open while
+  rejecting every credential, so a port check reports green on something nothing can
+  use — these log in and run a query instead. A database monitor can also run a custom
+  read-only query and judge its result (replication-health presets included), or run the
+  same query on **two servers and compare the answers** to see whether a replica really
+  carries the same data. Heavy comparisons take a daily wall-clock slot instead of an
+  interval. Alerts fire on up→down and down→up only, after a debounce, through the same
+  webhook as deploys. Optional **public status page** at `/status` (no login, off by
+  default, opt in per monitor), plus a downloadable history report.
+- **Message Queue** — a durable buffer between a producer and a consumer that cannot keep
+  up, so a burst piles up on disk instead of being dropped. HTTP only (no AMQP/MQTT):
+  publish, then either let consumers `pull`/`ack`, or give the queue a **destination URL**
+  and it delivers by itself (2xx = ack, failures retry with backoff, then a dead-letter
+  pile). A queue can own an **inbound port** so producers never touch the panel's address.
+  Delivery is at-least-once and strictly ordered.
 - **Port tools** — inspect and kill whatever holds a port, from the panel.
 - **SSL/TLS** — Let's Encrypt via win-acme, auto-renew.
 - **Interactive console** — a real shell (xterm + node-pty) per site or server-wide, admin-only.
@@ -132,6 +148,12 @@ Covered: the message queue (durability, ordering, poison-message cap, the
 inbound port and its guards) and the monitor's decision logic (read-only query
 guard, pass/fail conditions, two-server drift, the daily schedule) plus a live
 HTTP monitor driven through down/up transitions with its alerts captured.
+
+`db-monitor.test.js` needs real PostgreSQL/MongoDB servers — the point of a
+database monitor is that it logs in, and only a server that enforces a login can
+prove a wrong password goes red instead of green. It prints which server was
+missing and skips those cases rather than passing them silently; the setup
+commands are in the file's header comment.
 
 ---
 

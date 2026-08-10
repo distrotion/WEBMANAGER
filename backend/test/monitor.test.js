@@ -74,7 +74,14 @@ function makeMonitor(fields) {
   const drift = { host: 'A', compare_host: 'B', expect_op: 'eq', expect_value: '0' };
   ok('ตัวเลขเท่ากัน = ผ่าน', judgeComparison(drift, 1000, 1000, 5).ok === true);
   ok('ตัวเลขต่างกัน = ไม่ผ่าน', judgeComparison(drift, 1000, 999, 5).ok === false);
-  ok('บอกค่าทั้งสองฝั่งในข้อความ', /A=1000.*B=999/.test(judgeComparison(drift, 1000, 999, 5).error));
+  ok('บอกค่าทั้งสองฝั่งในข้อความ', /A=1000.*B=999/.test(judgeComparison(drift, 1000, 999, 5).error),
+    judgeComparison(drift, 1000, 999, 5).error);
+  // พอร์ตเป็นตัวเลือกสำหรับ DB (driver มี default) — ไม่ใส่ก็ต้องไม่โผล่ ":null"
+  ok('ไม่ใส่พอร์ต = ไม่มี ":null" ในข้อความ', !/:(null|undefined)/.test(judgeComparison(drift, 1, 2, 5).error));
+  ok('ใส่พอร์ต = แยกสองอินสแตนซ์บนเครื่องเดียวกันได้',
+    /A:5432=1.*A:5433=2/.test(
+      judgeComparison({ ...drift, host: 'A', port: 5432, compare_host: 'A', compare_port: 5433 }, 1, 2, 5).error
+    ));
   ok(
     'ยอมให้ตามหลังได้ N แถว (lte 5)',
     judgeComparison({ ...drift, expect_op: 'lte', expect_value: '5' }, 1000, 996, 5).ok === true
