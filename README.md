@@ -118,6 +118,21 @@ cd ui && flutter build web --release && cd ..                   # build the UI o
 Override target/port: `WEBMANAGER_ROOT=~/wm PORT=9000 ./scripts/start.sh`.
 The backend serves the built UI itself, so one process = the whole panel.
 
+### Tests
+
+```bash
+cd backend && npm test          # everything
+npm test mq                     # one file (substring match on the filename)
+```
+No framework and no extra dependency. Each `test/*.test.js` runs in its own
+process against its own throwaway `WEBMANAGER_ROOT`, so a test can never see
+another test's rows — or write into a real install's database.
+
+Covered: the message queue (durability, ordering, poison-message cap, the
+inbound port and its guards) and the monitor's decision logic (read-only query
+guard, pass/fail conditions, two-server drift, the daily schedule) plus a live
+HTTP monitor driven through down/up transitions with its alerts captured.
+
 ---
 
 ## Using the panel

@@ -270,6 +270,21 @@ function forwardUrlError(v) {
   return null;
 }
 
+// HTTP header names are tokens and values must be visible ASCII; Node throws a
+// synchronous TypeError otherwise. Caught here, at save time, because the
+// alternative is a queue that looks configured and then stalls on every single
+// delivery with nothing in the UI to explain why (a Thai or emoji API key pasted
+// into the box is an easy way to get there).
+function headerFieldError(name, value) {
+  if (!/^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/.test(String(name))) {
+    return `ชื่อ header "${name}" ใช้ไม่ได้ — ต้องเป็นตัวอักษร/ตัวเลขภาษาอังกฤษเท่านั้น`;
+  }
+  if (!/^[\x20-\x7E\t]*$/.test(String(value))) {
+    return `ค่าของ header "${name}" มีอักขระที่ส่งใน HTTP ไม่ได้ — ใช้ได้เฉพาะ ASCII (ห้ามภาษาไทย/emoji/ขึ้นบรรทัดใหม่)`;
+  }
+  return null;
+}
+
 function parseHeaders(json) {
   if (!json) return {};
   try {
@@ -294,36 +309,52 @@ function postOnce(url, body, { timeoutMs, headers }) {
     const payload = Buffer.from(body, 'utf8');
     const trimmed = body.trimStart();
     const t0 = Date.now();
-    const req = mod.request(
-      {
-        method: 'POST',
-        hostname: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? 443 : 80),
-        path: u.pathname + u.search,
-        timeout: timeoutMs,
-        headers: {
-          // Operator headers first so ours below always win — a wrong
-          // Content-Length would truncate the body at the destination.
-          ...headers,
-          'Content-Type': trimmed.startsWith('{') || trimmed.startsWith('[') ? 'application/json' : 'text/plain; charset=utf-8',
-          'Content-Length': payload.length,
+    // Everything below is wrapped: http.request() throws SYNCHRONOUSLY on a
+    // malformed header, and an escaping throw would reject this promise instead
+    // of returning a result — drain() would then abandon the message still
+    // leased, so it would sit invisible until the lease expired and fail the
+    // same way forever, with only a generic timeout recorded against it. As a
+    // resolved failure it goes down the normal retry/backoff/dead path with the
+    // real reason attached.
+    let req;
+    try {
+      req = mod.request(
+        {
+          method: 'POST',
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'https:' ? 443 : 80),
+          path: u.pathname + u.search,
+          timeout: timeoutMs,
+          headers: {
+            // Operator headers first so ours below always win — a wrong
+            // Content-Length would truncate the body at the destination.
+            ...headers,
+            'Content-Type': trimmed.startsWith('{') || trimmed.startsWith('[') ? 'application/json' : 'text/plain; charset=utf-8',
+            'Content-Length': payload.length,
+          },
         },
-      },
-      (res) => {
-        res.resume(); // drain so the socket frees promptly
-        const ms = Date.now() - t0;
-        // 2xx only. Unlike a health probe, a 404 here means the message was NOT
-        // accepted — retrying it is right, and silently deleting it is not.
-        if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true, ms, status: res.statusCode });
-        else resolve({ ok: false, ms, error: `ปลายทางตอบ HTTP ${res.statusCode}` });
-      }
-    );
+        (res) => {
+          res.resume(); // drain so the socket frees promptly
+          const ms = Date.now() - t0;
+          // 2xx only. Unlike a health probe, a 404 here means the message was
+          // NOT accepted — retrying it is right, and silently deleting it is not.
+          if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true, ms, status: res.statusCode });
+          else resolve({ ok: false, ms, error: `ปลายทางตอบ HTTP ${res.statusCode}` });
+        }
+      );
+    } catch (e) {
+      return resolve({ ok: false, error: `ส่งไม่ได้: ${e.message}` });
+    }
     req.on('timeout', () => {
       req.destroy();
       resolve({ ok: false, error: `ปลายทางไม่ตอบใน ${Math.round(timeoutMs / 1000)} วินาที` });
     });
     req.on('error', (e) => resolve({ ok: false, error: `ต่อปลายทางไม่ได้: ${e.message}` }));
-    req.end(payload);
+    try {
+      req.end(payload);
+    } catch (e) {
+      resolve({ ok: false, error: `ส่งไม่ได้: ${e.message}` });
+    }
   });
 }
 
@@ -651,11 +682,16 @@ function updateQueue(queueName, patch) {
   const rawHeaders = pick('forward_headers', q.forward_headers);
   const headers = rawHeaders ? (typeof rawHeaders === 'string' ? rawHeaders : JSON.stringify(rawHeaders)) : null;
   if (headers) {
+    let parsedHeaders;
     try {
-      const o = JSON.parse(headers);
-      if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error();
+      parsedHeaders = JSON.parse(headers);
+      if (!parsedHeaders || typeof parsedHeaders !== 'object' || Array.isArray(parsedHeaders)) throw new Error();
     } catch {
       throw new Error('header เพิ่มเติมต้องเป็น JSON object เช่น {"x-api-key":"..."}');
+    }
+    for (const [k, v] of Object.entries(parsedHeaders)) {
+      const e = headerFieldError(k, v);
+      if (e) throw new Error(e);
     }
   }
 

@@ -531,4 +531,20 @@ function start() {
   setInterval(tick, 1000).unref();
 }
 
-module.exports = { start, status, heartbeats, uptime, probe, runCheck, forget, unsafeQuery };
+module.exports = {
+  start,
+  status,
+  heartbeats,
+  uptime,
+  probe,
+  runCheck,
+  forget,
+  unsafeQuery,
+  // Test seam. These are pure decision functions — the read-only query guard,
+  // the pass/fail comparison, the drift judgement and the schedule — and they
+  // are exactly the parts where a wrong answer is silent: a monitor stays green
+  // on a broken target, or a nightly job runs at the wrong hour. Exported so
+  // test/monitor.test.js can drive them directly instead of trying to infer
+  // them from a live check.
+  _internal: { evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration },
+};
