@@ -16,7 +16,14 @@ function lockOr409(req, res, s) {
   const release = deploylock.acquire(s.id, (req.user && req.user.username) || 'manual');
   if (release) return release;
   const who = deploylock.held(s.id);
-  res.status(409).json({ error: `already deploying (started by ${who ? who.who : 'another job'})` });
+  // Say how long, not just who: "started 3 minutes ago" is a deploy in flight,
+  // "started 4 hours ago" is a job that died holding the lock — the operator
+  // needs to be able to tell those apart before deciding to force it open.
+  const mins = who ? Math.round((Date.now() - who.since) / 60_000) : 0;
+  res.status(409).json({
+    error: `กำลัง deploy อยู่แล้ว — เริ่มโดย ${who ? who.who : 'อีกงานหนึ่ง'} เมื่อ ${mins} นาทีที่แล้ว`,
+    deploying: who ? { who: who.who, since: who.since } : null,
+  });
   return null;
 }
 
@@ -37,6 +44,23 @@ router.post('/:id/deploy', guard.adminOnly, (req, res) => {
   Promise.resolve(job)
     .catch((e) => require('../logbus').emitLog(channel, `[fatal] ${e.message}`))
     .finally(release);
+});
+
+// Break a stuck deploy lock. The timeout in runner.js means a job should always
+// settle and free the lock on its own; this is the escape hatch for when one
+// does not, so the cure is no longer "restart the whole manager".
+router.post('/:id/deploy-lock/release', guard.adminOnly, (req, res) => {
+  const s = getSite(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  const was = deploylock.forceRelease(s.id);
+  if (!was) return res.json({ released: false, message: 'ไม่ได้ล็อกอยู่' });
+  const mins = Math.round((Date.now() - was.since) / 60_000);
+  audit(req.user, 'deploy-lock-release', s.name, `ปลดล็อกที่ ${was.who} ถือไว้ ${mins} นาที`);
+  require('../logbus').emitLog(
+    `site-${s.id}`,
+    `[lock] ปลดล็อก deploy ที่ค้างอยู่ (${was.who} ถือไว้ ${mins} นาที) โดย ${(req.user && req.user.username) || '?'}`
+  );
+  res.json({ released: true, was: { who: was.who, since: was.since } });
 });
 
 // Deploy history for the site (drives the rollback picker).

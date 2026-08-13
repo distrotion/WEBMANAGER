@@ -715,9 +715,37 @@ class Api {
   }
 
   /// Fire a button action that streams its logs over WebSocket.
+  /// Fire a site action (deploy / start / stop / restart / ssl / …).
+  ///
+  /// The response used to be discarded, which meant every one of those buttons
+  /// swallowed its failure whole: a 409 "already deploying", a 403, a 500 — all
+  /// looked exactly like success, and the button appeared to do nothing at all.
+  /// Anything that is not 2xx now throws with the server's own message.
   Future<void> action(int id, String path, [Map<String, dynamic>? body]) async {
-    await http.post(_u('/api/sites/$id/$path'),
+    final r = await http.post(_u('/api/sites/$id/$path'),
         headers: _headers, body: body == null ? null : jsonEncode(body));
+    if (r.statusCode >= 200 && r.statusCode < 300) return;
+    String message;
+    try {
+      message = (jsonDecode(r.body) as Map)['error']?.toString() ?? 'HTTP ${r.statusCode}';
+    } catch (_) {
+      message = 'HTTP ${r.statusCode}';
+    }
+    throw Exception(message);
+  }
+
+  /// Break a deploy lock left behind by a job that never finished.
+  Future<Map<String, dynamic>> releaseDeployLock(int id) async {
+    final r = await http.post(_u('/api/sites/$id/deploy-lock/release'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'ปลดล็อกไม่สำเร็จ');
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
+  }
+
+  /// One site row, including its current `deploying` state.
+  Future<Map<String, dynamic>> site(int id) async {
+    final r = await http.get(_u('/api/sites/$id'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'โหลดไม่สำเร็จ');
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
   }
 
   /// Persisted log history for a channel (`site-<id>` or `system`).

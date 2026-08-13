@@ -1329,6 +1329,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
   String get _channel => 'site-${s['id']}';
   Map<String, dynamic> _metrics = {};
   Timer? _metricsTimer;
+  Timer? _lockTimer;
 
   bool get _isProcess => s['runtime'] == 'nodered' || s['runtime'] == 'node';
 
@@ -1339,11 +1340,17 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
       _loadMetrics();
       _metricsTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMetrics());
     }
+    // Also picks up `deploying` starting/finishing from another browser or from
+    // the CI/CD watcher, not just from actions taken on this page.
+    _lockTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!pageHidden()) _refreshSite();
+    });
   }
 
   @override
   void dispose() {
     _metricsTimer?.cancel();
+    _lockTimer?.cancel();
     super.dispose();
   }
 
@@ -1357,10 +1364,90 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     try {
       await Api.instance.action(s['id'], path, body);
     } catch (e) {
+      // A failed action used to vanish silently (api.dart discarded the
+      // response). Now it is shown, and long enough to actually read — the
+      // message is the only clue the operator gets when nothing else happens.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$e'.replaceFirst('Exception: ', '')),
+          duration: const Duration(seconds: 8),
+          showCloseIcon: true,
+        ));
       }
     }
+    _refreshSite();
+  }
+
+  // Pull the site row again so `deploying` (and status) reflect what just
+  // happened, whether the action was accepted or refused.
+  Future<void> _refreshSite() async {
+    try {
+      final fresh = await Api.instance.site(s['id'] as int);
+      if (mounted) setState(() => s = fresh);
+    } catch (_) {/* the page keeps whatever it had */}
+  }
+
+  Future<void> _releaseLock() async {
+    final held = s['deploying'] as Map?;
+    final mins = held == null ? 0 : ((DateTime.now().millisecondsSinceEpoch - (held['since'] as num).toInt()) / 60000).round();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('ปลดล็อก deploy?'),
+        content: Text(
+          'มีงาน deploy ที่ ${held?['who'] ?? '?'} เริ่มไว้เมื่อ $mins นาทีที่แล้ว และยังไม่จบ\n\n'
+          'ถ้ามันยังทำงานอยู่จริง การปลดล็อกแล้วสั่ง deploy ซ้ำจะทำให้สองงานเขียนโฟลเดอร์เดียวกันพร้อมกัน '
+          'ซึ่งทำให้ไฟล์พัง — ปลดเฉพาะเมื่อแน่ใจว่ามันค้างจริง (ดูใน console ว่าไม่มีอะไรเดินต่อแล้ว)',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('ยกเลิก')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('ปลดล็อก')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Api.instance.releaseDeployLock(s['id'] as int);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ปลดล็อกแล้ว — กด Pull & Deploy ได้')));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))));
+      }
+    }
+    _refreshSite();
+  }
+
+  // Shown only while a deploy holds this site's lock — the state that used to be
+  // invisible and made "Pull & Deploy" look like a dead button.
+  Widget _deployingBanner() {
+    final held = s['deploying'] as Map?;
+    if (held == null) return const SizedBox.shrink();
+    final mins = ((DateTime.now().millisecondsSinceEpoch - (held['since'] as num).toInt()) / 60000).round();
+    final stale = mins >= 20;
+    final color = stale ? Colors.orangeAccent : Colors.lightBlueAccent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(children: [
+        Icon(stale ? Icons.warning_amber : Icons.hourglass_top, size: 18, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            stale
+                ? 'deploy ค้างอยู่ — ${held['who']} เริ่มไว้ $mins นาทีที่แล้วและยังไม่จบ ปุ่ม Pull & Deploy จะถูกปฏิเสธจนกว่าจะปลดล็อก'
+                : 'กำลัง deploy อยู่ — เริ่มโดย ${held['who']} เมื่อ $mins นาทีที่แล้ว',
+            style: TextStyle(fontSize: 12, color: color),
+          ),
+        ),
+        if (Api.instance.isAdmin)
+          TextButton(onPressed: _releaseLock, child: const Text('ปลดล็อก')),
+      ]),
+    );
   }
 
   // Roll back to a version that was deployed before. The list comes from the
@@ -1518,6 +1605,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _deployingBanner(),
             _group('Open', [
               if (_directUrl() != null)
                 _btn('Open :${s['direct_port']}', Icons.open_in_new, () => _open(_directUrl()!)),

@@ -12,14 +12,21 @@ const getSite = (id) => db.prepare('SELECT * FROM sites WHERE id=?').get(id);
 // changes the server is admin-only — creating a site chooses what code the
 // manager will fetch and run.
 
+// `deploying` rides along on the site row so the page can say "a deploy is
+// already running, started by X at HH:MM" instead of leaving the operator to
+// guess why the button does nothing.
+const deploylock = require('../deploylock');
+const withLock = (s, all) => ({ ...s, deploying: (all || deploylock.allHeld())[s.id] || null });
+
 router.get('/', (req, res) => {
-  res.json(db.prepare('SELECT * FROM sites ORDER BY name').all());
+  const all = deploylock.allHeld();
+  res.json(db.prepare('SELECT * FROM sites ORDER BY name').all().map((s) => withLock(s, all)));
 });
 
 router.get('/:id', (req, res) => {
   const s = getSite(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
-  res.json(s);
+  res.json(withLock(s));
 });
 
 router.post('/', guard.adminOnly, (req, res) => {
