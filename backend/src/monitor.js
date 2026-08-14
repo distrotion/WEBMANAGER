@@ -211,8 +211,27 @@ function evaluateCondition(value, op, expected) {
 
 // Given the first cell of a query result and the monitor's expected condition,
 // produce a {ok, ms, error} result. Used by every database check.
+// A query that returns NULL — or matches no rows at all — has told us nothing,
+// and nothing must never read as healthy. It used to: Number(null) is 0 in JS, so
+// a "replication lag under 300 seconds" check on a server with no log shipping
+// configured judged NULL as 0 seconds of lag and went green forever, watching
+// absolutely nothing. That is the exact failure this monitor type exists to
+// catch, reproduced inside the feature meant to catch it.
+function noValue(v) {
+  return v === null || v === undefined || v === '';
+}
+
 function judgeQueryResult(m, firstCell, ms) {
   if (!m.check_query) return { ok: true, ms }; // liveness only, no condition
+  if (noValue(firstCell)) {
+    return {
+      ok: false,
+      ms,
+      error:
+        'query ไม่คืนค่า (NULL หรือไม่มีแถวเลย) — ตรวจว่า query ถูกต้องและชี้ไปเครื่องที่ถูก ' +
+        '(เช่น preset log shipping ต้องชี้ไปเครื่อง secondary)',
+    };
+  }
   const passed = evaluateCondition(firstCell, m.expect_op, m.expect_value);
   if (passed) return { ok: true, ms };
   return {
@@ -240,6 +259,19 @@ function firstCellPg(res) {
 const where = (host, port) => (port ? `${host}:${port}` : `${host}`);
 
 function judgeComparison(m, a, b, ms) {
+  // Same trap on the drift path, and worse: two servers both answering NULL
+  // compare as identical (String(null) === String(null)) and report "ข้อมูลตรงกัน"
+  // while neither side actually returned anything.
+  if (noValue(a) || noValue(b)) {
+    return {
+      ok: false,
+      ms,
+      error:
+        `เทียบไม่ได้: ${where(m.host, m.port)}=${JSON.stringify(a)}` +
+        ` vs ${where(m.compare_host, m.compare_port || m.port)}=${JSON.stringify(b)}` +
+        ' — มีฝั่งที่ query ไม่คืนค่า',
+    };
+  }
   const na = Number(a);
   const nb = Number(b);
   const diff = Number.isFinite(na) && Number.isFinite(nb) ? Math.abs(na - nb) : String(a) === String(b) ? 0 : 1;
@@ -610,5 +642,8 @@ module.exports = {
   // on a broken target, or a nightly job runs at the wrong hour. Exported so
   // test/monitor.test.js can drive them directly instead of trying to infer
   // them from a live check.
-  _internal: { evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration, isAuthRejection, authBackoffFor },
+  _internal: {
+    evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration,
+    isAuthRejection, authBackoffFor, noValue,
+  },
 };

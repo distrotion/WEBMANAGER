@@ -12,7 +12,7 @@ const settings = require('../src/settings');
 const db = require('../src/db');
 const {
   evaluateCondition, judgeQueryResult, judgeComparison, nextDue, humanDuration,
-  isAuthRejection, authBackoffFor,
+  isAuthRejection, authBackoffFor, noValue,
 } = monitor._internal;
 
 function makeMonitor(fields) {
@@ -73,6 +73,22 @@ function makeMonitor(fields) {
   const failed = judgeQueryResult({ check_query: 'SELECT 1', expect_op: 'eq', expect_value: '0' }, 3, 5);
   ok('ไม่ตรง = ไม่ผ่าน และบอกค่าที่ได้จริง', failed.ok === false && /got 3/.test(failed.error), failed.error);
 
+  section('query ที่ไม่คืนค่า ต้องไม่กลายเป็นเลข 0');
+  // Number(null) คือ 0 ใน JS — เดิมทำให้ "lag < 300 วินาที" ผ่านทันทีเมื่อ query
+  // คืน NULL (เช่นชี้ preset log shipping ไปเครื่องที่ไม่ได้ตั้ง log shipping)
+  // = เขียว 100% ทั้งที่ไม่ได้เฝ้าอะไรเลย ซึ่งคือกับดักที่ monitor แบบนี้มีไว้กัน
+  ok('null = ไม่มีข้อมูล', noValue(null) === true);
+  ok('undefined = ไม่มีข้อมูล', noValue(undefined) === true);
+  ok('string ว่าง = ไม่มีข้อมูล', noValue('') === true);
+  ok('เลข 0 คือค่าจริง ไม่ใช่ "ไม่มีข้อมูล"', noValue(0) === false);
+  ok('"0" คือค่าจริง', noValue('0') === false);
+  const nullLag = judgeQueryResult({ check_query: 'x', expect_op: 'lt', expect_value: '300' }, null, 5);
+  ok('NULL กับเงื่อนไข "lt 300" ต้องแดง ไม่ใช่เขียว', nullLag.ok === false, JSON.stringify(nullLag));
+  ok('บอกให้ไปตรวจว่าชี้เครื่องถูกไหม', /ไม่คืนค่า/.test(nullLag.error || ''), nullLag.error);
+  ok('NULL กับ "eq 0" ก็ต้องแดง', judgeQueryResult({ check_query: 'x', expect_op: 'eq', expect_value: '0' }, null, 5).ok === false);
+  ok('เลข 0 จริงยังผ่าน eq 0 ได้ตามเดิม',
+    judgeQueryResult({ check_query: 'x', expect_op: 'eq', expect_value: '0' }, 0, 5).ok === true);
+
   section('ตรวจข้อมูลเท่ากันสองเครื่อง (drift)');
   const drift = { host: 'A', compare_host: 'B', expect_op: 'eq', expect_value: '0' };
   ok('ตัวเลขเท่ากัน = ผ่าน', judgeComparison(drift, 1000, 1000, 5).ok === true);
@@ -95,7 +111,13 @@ function makeMonitor(fields) {
   );
   ok('checksum เป็น string เท่ากัน = ต่างกัน 0', judgeComparison(drift, 'ABC123', 'ABC123', 5).ok === true);
   ok('checksum ต่างกัน = ต่างกัน 1 จึงไม่ผ่าน eq 0', judgeComparison(drift, 'ABC123', 'ZZZ999', 5).ok === false);
-  ok('ฝั่งหนึ่ง null = ถือว่าต่างกัน', judgeComparison(drift, 1000, null, 5).ok === false);
+  ok('ฝั่งหนึ่ง null = แดง', judgeComparison(drift, 1000, null, 5).ok === false);
+  // เดิม: String(null)===String(null) → ต่างกัน 0 → ผ่าน eq 0 = "ข้อมูลตรงกัน"
+  // ทั้งที่ไม่มีฝั่งไหนคืนค่าอะไรเลย
+  const bothNull = judgeComparison(drift, null, null, 5);
+  ok('สองฝั่ง null ต้องไม่ถือว่า "ตรงกัน"', bothNull.ok === false, JSON.stringify(bothNull));
+  ok('บอกว่าเทียบไม่ได้ ไม่ใช่ว่าเท่ากัน', /เทียบไม่ได้/.test(bothNull.error || ''), bothNull.error);
+  ok('เลข 0 ทั้งสองฝั่ง = เทียบได้จริง และเท่ากัน', judgeComparison(drift, 0, 0, 5).ok === true);
 
   section('ตารางเวลา');
   const base = new Date(2026, 0, 15, 10, 0, 0, 0).getTime(); // 15 ม.ค. 2026 10:00 เวลาเครื่อง

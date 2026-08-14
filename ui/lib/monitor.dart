@@ -843,7 +843,14 @@ class _MonitorDialogState extends State<MonitorDialog> {
   bool get _customQuery => _isDbType && _type != 'mongodb';
   static const _presets = <String, Map<String, String>>{
     'Always On AG — ฐานที่ยังไม่ sync (ควร = 0)': {
-      'query': "SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states WHERE synchronization_state_desc <> 'SYNCHRONIZED'",
+      // Returns -1 when the AG has no databases at all, so pointing this at a
+      // server that is not in an Always On group goes RED instead of green.
+      // The plain COUNT(*) it replaced answered 0 there — a true zero, which
+      // passed "= 0" and left the monitor green while watching nothing.
+      'query':
+          'SELECT CASE WHEN COUNT(*) = 0 THEN -1 ELSE '
+          "SUM(CASE WHEN synchronization_state_desc <> 'SYNCHRONIZED' THEN 1 ELSE 0 END) END "
+          'FROM sys.dm_hadr_database_replica_states',
       'op': 'eq',
       'value': '0',
       // Which instance to point `host` at is not obvious and getting it wrong
