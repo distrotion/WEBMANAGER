@@ -175,8 +175,12 @@ class _MonitorPageState extends State<MonitorPage> {
   Widget build(BuildContext context) {
     return MonitorThemeScope(
       palette: _p,
-      child: Theme(
+      // AnimatedTheme cross-fades every colour in the ThemeData instead of
+      // snapping — switching สว่าง↔พลบค่ำ↔กลางคืน on a screen someone is staring
+      // at should not feel like the lights being flicked.
+      child: AnimatedTheme(
         data: _p.theme,
+        duration: const Duration(milliseconds: 350),
         child: _MonitorView(palette: _p, onPickPalette: _pick),
       ),
     );
@@ -191,18 +195,29 @@ class _MonitorView extends StatefulWidget {
   State<_MonitorView> createState() => _MonitorViewState();
 }
 
-class _MonitorViewState extends State<_MonitorView> {
+class _MonitorViewState extends State<_MonitorView> with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   Timer? _timer;
   bool _publicOn = false;
   int _publicCount = 0;
 
+  // ONE controller drives every pulse on the page. A wall of forty monitors with
+  // a controller each would keep forty tickers running; this keeps one, and the
+  // pulses stay in step with each other, which reads as deliberate rather than
+  // as forty things twitching independently.
+  late final AnimationController _pulse;
+
+  // Newest beat timestamp per monitor, so a bar that has just gained a beat can
+  // animate that one in and leave the rest alone.
+  final Map<int, int> _lastBeatTs = {};
+
   MonPalette get _p => widget.palette;
 
   @override
   void initState() {
     super.initState();
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
     _reload();
     if (Api.instance.isAdmin) _loadPublic();
     _timer = Timer.periodic(const Duration(seconds: 8), (_) => _reload(silent: true));
@@ -211,6 +226,7 @@ class _MonitorViewState extends State<_MonitorView> {
   @override
   void dispose() {
     _timer?.cancel();
+    _pulse.dispose();
     super.dispose();
   }
 
@@ -460,25 +476,29 @@ class _MonitorViewState extends State<_MonitorView> {
     );
   }
 
-  Widget _heartbeatBar(List beats) {
+  Widget _heartbeatBar(int id, List beats) {
     if (beats.isEmpty) {
       return Text('ยังไม่มีประวัติ', style: TextStyle(fontSize: 11, color: _p.idle));
     }
+    final list = beats.cast<Map<String, dynamic>>();
+    final newestTs = (list.last['ts'] as num?)?.toInt() ?? 0;
+    // Animate only the beat that was not there a moment ago. Replaying the whole
+    // bar on every 8s poll would make a still-healthy monitor look like it was
+    // constantly changing.
+    final isNew = _lastBeatTs[id] != null && _lastBeatTs[id] != newestTs;
+    _lastBeatTs[id] = newestTs;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final b in beats.cast<Map<String, dynamic>>())
+        for (final b in list)
           Tooltip(
             message: '${localTime(_msToDbUtc(b['ts']))}\n'
                 '${b['ok'] == 1 ? '${b['ms'] ?? '?'} ms' : (b['error'] ?? 'down')}',
-            child: Container(
-              width: 6,
-              height: 18,
-              margin: const EdgeInsets.symmetric(horizontal: 1),
-              decoration: BoxDecoration(
-                color: b['ok'] == 1 ? _p.up : _p.down,
-                borderRadius: BorderRadius.circular(2),
-              ),
+            child: _Beat(
+              key: ValueKey('$id-${b['ts']}'),
+              color: b['ok'] == 1 ? _p.up : _p.down,
+              animateIn: isNew && (b['ts'] as num?)?.toInt() == newestTs,
             ),
           ),
       ],
@@ -498,14 +518,31 @@ class _MonitorViewState extends State<_MonitorView> {
     final err = m['error']?.toString();
     final uptime = (m['uptime'] as Map?) ?? {};
     final beats = (m['beats'] as List?) ?? [];
-    return Card(
-      color: _p.card,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        // A down monitor keeps a faint red wash so the row itself reads as the
+        // problem, not just the icon on its left.
+        color: enabled && up == false ? Color.alphaBlend(_p.down.withValues(alpha: 0.10), _p.card) : _p.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: enabled && up == false ? _p.down.withValues(alpha: 0.45) : Colors.transparent,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: ListTile(
-          leading: Icon(
-            !enabled ? Icons.pause_circle : (up == true ? Icons.check_circle : (up == false ? Icons.error : Icons.help_outline)),
+          // Only a DOWN monitor pulses. If everything moved, movement would stop
+          // meaning anything — the point is that the eye lands on the problem
+          // when the page is glanced at from across a room.
+          leading: _StatusDot(
+            icon: !enabled
+                ? Icons.pause_circle
+                : (up == true ? Icons.check_circle : (up == false ? Icons.error : Icons.help_outline)),
             color: _statusColor(up),
+            pulse: enabled && up == false ? _pulse : null,
           ),
           title: Row(children: [
             Text('${m['name']}', style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -543,7 +580,7 @@ class _MonitorViewState extends State<_MonitorView> {
               _uptimeChip('30d', uptime['d30']),
             ]),
             const SizedBox(height: 4),
-            _heartbeatBar(beats),
+            _heartbeatBar(m['id'] as int, beats),
             if (m['checkedAt'] != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -566,6 +603,109 @@ class _MonitorViewState extends State<_MonitorView> {
           ]),
         ),
       ),
+    );
+  }
+}
+
+/// One bar of the heartbeat strip. A bar that has just arrived grows up from the
+/// baseline and fades in; the ones already there are built as plain boxes, so a
+/// steady monitor costs nothing to render.
+class _Beat extends StatefulWidget {
+  final Color color;
+  final bool animateIn;
+  const _Beat({super.key, required this.color, required this.animateIn});
+  @override
+  State<_Beat> createState() => _BeatState();
+}
+
+class _BeatState extends State<_Beat> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+    // Nothing to play for a bar that was already on screen — start finished.
+    value: widget.animateIn ? 0 : 1,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.animateIn) _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_c.isCompleted) return _bar(1, 1);
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) {
+        final t = Curves.easeOutBack.transform(_c.value.clamp(0.0, 1.0));
+        return _bar(t.clamp(0.0, 1.0), _c.value);
+      },
+    );
+  }
+
+  Widget _bar(double scale, double opacity) => SizedBox(
+        width: 8,
+        height: 18,
+        child: Center(
+          child: Opacity(
+            opacity: opacity.clamp(0.0, 1.0),
+            child: Container(
+              width: 6,
+              height: 18 * scale,
+              decoration: BoxDecoration(
+                color: widget.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+/// The status icon, with a halo that breathes while the monitor is down. The
+/// controller is owned by the page and shared, so this widget only listens.
+class _StatusDot extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final Animation<double>? pulse;
+  const _StatusDot({required this.icon, required this.color, this.pulse});
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = Icon(icon, color: color);
+    if (pulse == null) return dot;
+    return AnimatedBuilder(
+      animation: pulse!,
+      builder: (_, child) {
+        // One breath per cycle: the ring swells and fades out, then restarts.
+        final t = Curves.easeOut.transform(pulse!.value);
+        return SizedBox(
+          width: 34,
+          height: 34,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 18 + 16 * t,
+                height: 18 + 16 * t,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withValues(alpha: 0.28 * (1 - t)),
+                ),
+              ),
+              child!,
+            ],
+          ),
+        );
+      },
+      child: dot,
     );
   }
 }
