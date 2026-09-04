@@ -36,6 +36,34 @@ void downloadText(String filename, String content) {
   html.Url.revokeObjectUrl(url);
 }
 
+/// Open the browser's file picker (multi-select) and read each chosen file's
+/// raw bytes locally. Returns an empty list if the user cancels.
+Future<List<({String name, List<int> bytes})>> pickFilesBytes() {
+  final completer = Completer<List<({String name, List<int> bytes})>>();
+  final input = html.FileUploadInputElement()..multiple = true;
+  input.onChange.listen((_) async {
+    final files = input.files;
+    if (files == null || files.isEmpty) {
+      completer.complete(const []);
+      return;
+    }
+    final out = <({String name, List<int> bytes})>[];
+    for (final f in files) {
+      final reader = html.FileReader();
+      final done = Completer<void>();
+      reader.onLoad.listen((_) => done.complete());
+      reader.onError.listen((_) => done.complete());
+      reader.readAsArrayBuffer(f);
+      await done.future;
+      final r = reader.result;
+      if (r is List<int>) out.add((name: f.name, bytes: r));
+    }
+    completer.complete(out);
+  });
+  input.click();
+  return completer.future;
+}
+
 /// Trigger a browser "save as" of raw [bytes] (e.g. a file fetched with an auth
 /// header, which a plain <a download> link can't send).
 void downloadBytes(String filename, List<int> bytes) {

@@ -29,6 +29,13 @@ function caCertPath() {
   return CA_CERT;
 }
 
+// Let other TLS-capable listeners (FTPS) reuse the same server cert instead of
+// minting their own — one cert to trust, one CA to install on client machines.
+function ensureServerCert() {
+  if (!fs.existsSync(SRV_CERT) || !fs.existsSync(SRV_KEY)) makeServerCert();
+  return { certPath: SRV_CERT, keyPath: SRV_KEY };
+}
+
 function localIps() {
   const ips = ['127.0.0.1'];
   for (const list of Object.values(os.networkInterfaces())) {
@@ -175,4 +182,4 @@ function status() {
   };
 }
 
-module.exports = { attach, start, stop, regenerate, status, caCertPath, HTTPS_PORT };
+module.exports = { attach, start, stop, regenerate, status, caCertPath, ensureServerCert, localIps, HTTPS_PORT };

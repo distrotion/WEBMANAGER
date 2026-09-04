@@ -16,6 +16,7 @@ import 'file_share.dart';
 import 'net_share.dart';
 import 'monitor.dart';
 import 'mq.dart';
+import 'ftp.dart';
 import 'autodeploy_log.dart';
 import 'timefmt.dart';
 
@@ -344,6 +345,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MonitorPage()));
               } else if (v == 'mq') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MqPage()));
+              } else if (v == 'ftp') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FtpPage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -385,6 +388,8 @@ class _SitesPageState extends State<SitesPage> {
               // non-admin, so a 'user' would open a page of 403s.
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'mq', child: ListTile(leading: Icon(Icons.low_priority), title: Text('Message Queue (คิวข้อมูล)'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'ftp', child: ListTile(leading: Icon(Icons.drive_folder_upload), title: Text('FTP server'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)

@@ -214,6 +214,20 @@ CREATE INDEX IF NOT EXISTS idx_mq_ready ON mq_messages(queue_id, state, id);
 -- The reaper sweeps expired leases across every queue at once.
 CREATE INDEX IF NOT EXISTS idx_mq_lease ON mq_messages(state, lease_until);
 
+-- FTP/FTPS server accounts. Server-wide settings (enabled, port, passive range,
+-- TLS) live in the settings table like https_enabled — one server, not one row
+-- per config the way gateways/monitors are. root_path scopes the account the
+-- same way shares.root_path scopes a File Share: ftp-srv itself refuses to
+-- resolve outside it, so this is not merely advisory.
+CREATE TABLE IF NOT EXISTS ftp_users (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  username     TEXT UNIQUE NOT NULL,
+  password_enc TEXT NOT NULL,           -- AES-256-GCM via secretbox — ftp-srv needs it back in plaintext to compare
+  root_path    TEXT NOT NULL,           -- absolute folder this account is chrooted to
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS net_shares (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,

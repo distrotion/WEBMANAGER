@@ -60,6 +60,9 @@ startSubsystem('mq', () => require('./mq').start());
 // own interval and alert on state transitions.
 startSubsystem('monitor', () => require('./monitor').start());
 
+// FTP/FTPS server: off by default, starts only if it was left enabled.
+startSubsystem('ftp', () => require('./ftp').start());
+
 const app = express();
 // The panel is served from this same origin and every other consumer (the ML
 // share puller, the fleet hub) is a server-side HTTP client, which CORS does not
@@ -98,6 +101,7 @@ app.use('/api/shares', require('./routes/shares.routes'));
 app.use('/api/mq', require('./routes/mq.routes'));
 app.use('/api/netshares', authMiddleware, require('./routes/netshares.routes'));
 app.use('/api/monitors', authMiddleware, require('./routes/monitors.routes'));
+app.use('/api/ftp', authMiddleware, require('./routes/ftp.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));

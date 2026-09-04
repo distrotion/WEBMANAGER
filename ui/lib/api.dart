@@ -415,6 +415,84 @@ class Api {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  // ---- FTP/FTPS server ----
+  Future<Map<String, dynamic>> ftpStatus() async {
+    final r = await http.get(_u('/api/ftp/status'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('ftp status failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateFtpSettings(Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/ftp/settings'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> ftpUsers() async {
+    final r = await http.get(_u('/api/ftp/users'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('ftp users failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createFtpUser(Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/ftp/users'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateFtpUser(int id, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/ftp/users/$id'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteFtpUser(int id) async {
+    await http.delete(_u('/api/ftp/users/$id'), headers: _headers);
+  }
+
+  // ---- FTP in-panel folder browser ----
+  Future<Map<String, dynamic>> ftpList(int id, {String path = ''}) async {
+    final base = _u('/api/ftp/users/$id/list');
+    final uri = base.replace(queryParameters: {...base.queryParameters, if (path.isNotEmpty) 'path': path});
+    final r = await http.get(uri, headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'list failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<List<int>> ftpFileBytes(int id, String path) async {
+    final base = _u('/api/ftp/users/$id/file');
+    final uri = base.replace(queryParameters: {...base.queryParameters, 'path': path});
+    final r = await http.get(uri, headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+    if (r.statusCode != 200) throw Exception('download failed (${r.statusCode})');
+    return r.bodyBytes;
+  }
+
+  Future<void> ftpUpload(int id, String path, String name, List<int> bytes) async {
+    final base = _u('/api/ftp/users/$id/upload');
+    final uri = base.replace(queryParameters: {...base.queryParameters, 'path': path, 'name': name});
+    final r = await http.post(uri, headers: {
+      if (_token != null) 'Authorization': 'Bearer $_token',
+      'Content-Type': 'application/octet-stream',
+    }, body: bytes);
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'upload failed');
+  }
+
+  Future<void> ftpMkdir(int id, String path, String name) async {
+    final r = await http.post(_u('/api/ftp/users/$id/mkdir'),
+        headers: _headers, body: jsonEncode({'path': path, 'name': name}));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'mkdir failed');
+  }
+
+  Future<void> ftpRename(int id, String path, String newName) async {
+    final r = await http.post(_u('/api/ftp/users/$id/rename'),
+        headers: _headers, body: jsonEncode({'path': path, 'new_name': newName}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'rename failed');
+  }
+
+  Future<void> ftpDeleteEntry(int id, String path) async {
+    final r = await http.post(_u('/api/ftp/users/$id/delete'),
+        headers: _headers, body: jsonEncode({'path': path}));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'delete failed');
+  }
+
   // ---- uptime monitoring ----
   Future<List<Map<String, dynamic>>> monitors() async {
     final r = await http.get(_u('/api/monitors'), headers: _headers);
