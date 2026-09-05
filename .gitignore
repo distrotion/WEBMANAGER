@@ -16,3 +16,6 @@ webmanager-dev/
 
 # Serena tool
 .serena/
+
+# Per-machine agent session state (hub ids, timestamps)
+.claude/

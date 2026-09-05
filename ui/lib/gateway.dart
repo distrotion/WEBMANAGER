@@ -273,7 +273,7 @@ class _GatewayPageState extends State<GatewayPage> {
                 border: Border.all(color: _statusColor(status)),
                 color: _statusColor(status).withValues(alpha: 0.12),
               ),
-              child: Text(conns is int && conns > 0 ? '$status·$conns' : status,
+              child: Text('${conns is int && conns > 0 ? '$status·$conns' : status}${g['ftp_mode'] == true ? '·FTP' : ''}',
                   style: TextStyle(fontSize: 10, color: _statusColor(status))),
             ),
             Switch(
@@ -391,6 +391,7 @@ class _GatewayDialogState extends State<GatewayDialog> {
   final _bind = TextEditingController(text: '0.0.0.0');
   final _max = TextEditingController();
   int? _expiresHours;
+  bool _ftpMode = false;
   String? _error;
   bool _busy = false;
 
@@ -401,6 +402,7 @@ class _GatewayDialogState extends State<GatewayDialog> {
     if (g != null) {
       _bind.text = g['bind_host'] ?? '0.0.0.0';
       _max.text = (g['max_conns'] ?? 0) == 0 ? '' : '${g['max_conns']}';
+      _ftpMode = g['ftp_mode'] == true;
     }
   }
 
@@ -410,6 +412,7 @@ class _GatewayDialogState extends State<GatewayDialog> {
       final body = {
         'bind_host': _bind.text.trim().isEmpty ? '0.0.0.0' : _bind.text.trim(),
         'max_conns': int.tryParse(_max.text.trim()) ?? 0,
+        'ftp_mode': _ftpMode,
         if (_expiresHours != null)
           'expires_at': DateTime.now().add(Duration(hours: _expiresHours!)).millisecondsSinceEpoch,
       };
@@ -450,6 +453,19 @@ class _GatewayDialogState extends State<GatewayDialog> {
               DropdownMenuItem(value: 24, child: Text('24 ชั่วโมง')),
             ],
             onChanged: (v) => setState(() => _expiresHours = v),
+          ),
+          const SizedBox(height: 6),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: _ftpMode,
+            onChanged: (v) => setState(() => _ftpMode = v),
+            title: const Text('FTP mode', style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+              'ปลายทางเป็น FTP server (กล้อง/HMI): gateway จะแก้คำตอบ passive ให้ list/โอนไฟล์ทะลุมาได้ '
+              '(ใช้พอร์ต 51000-51099 บนเครื่องนี้เป็นช่องข้อมูล)',
+              style: TextStyle(fontSize: 11),
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),

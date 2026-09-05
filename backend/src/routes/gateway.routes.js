@@ -70,6 +70,7 @@ const view = (g) => ({
   enabled: !!g.enabled,
   max_conns: g.max_conns,
   expires_at: g.expires_at,
+  ftp_mode: !!g.ftp_mode,
   status: gateway.status(g),
   conns: gateway.liveConns(g.id),
 });
@@ -95,10 +96,11 @@ router.post('/', adminOnly, async (req, res) => {
   if (err) return res.status(400).json({ error: err });
   const info = db
     .prepare(
-      `INSERT INTO gateways (name, listen_port, dest_host, dest_port, bind_host, enabled, max_conns, expires_at)
-       VALUES (@name,@listen_port,@dest_host,@dest_port,@bind_host,@enabled,@max_conns,@expires_at)`
+      `INSERT INTO gateways (name, listen_port, dest_host, dest_port, bind_host, enabled, max_conns, expires_at, ftp_mode)
+       VALUES (@name,@listen_port,@dest_host,@dest_port,@bind_host,@enabled,@max_conns,@expires_at,@ftp_mode)`
     )
     .run({
+      ftp_mode: b.ftp_mode ? 1 : 0,
       name: String(b.name).trim(),
       listen_port: parseInt(b.listen_port, 10),
       dest_host: String(b.dest_host).trim(),
@@ -115,7 +117,7 @@ router.post('/', adminOnly, async (req, res) => {
   res.status(201).json(view(g));
 });
 
-const FIELDS = ['name', 'listen_port', 'dest_host', 'dest_port', 'bind_host', 'enabled', 'max_conns', 'expires_at'];
+const FIELDS = ['name', 'listen_port', 'dest_host', 'dest_port', 'bind_host', 'enabled', 'max_conns', 'expires_at', 'ftp_mode'];
 router.put('/:id', adminOnly, (req, res) => {
   const g = db.prepare('SELECT * FROM gateways WHERE id=?').get(req.params.id);
   if (!g) return res.status(404).json({ error: 'not found' });

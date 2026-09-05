@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS gateways (
   enabled     INTEGER NOT NULL DEFAULT 1,
   max_conns   INTEGER NOT NULL DEFAULT 0,-- 0 = unlimited
   expires_at  INTEGER,                   -- epoch ms; null = never
+  ftp_mode    INTEGER NOT NULL DEFAULT 0,-- rewrite FTP PASV replies so data channels tunnel too — see gateway.js
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -296,6 +297,9 @@ const MIGRATIONS = {
     ['compare_host', 'TEXT'],
     ['compare_port', 'INTEGER'],
     ['daily_at', 'TEXT'],
+  ],
+  gateways: [
+    ['ftp_mode', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   mq_queues: [
     // Push mode, added after the queue tables first shipped.
