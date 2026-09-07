@@ -17,6 +17,7 @@ import 'net_share.dart';
 import 'monitor.dart';
 import 'mq.dart';
 import 'ftp.dart';
+import 'camera.dart';
 import 'autodeploy_log.dart';
 import 'timefmt.dart';
 
@@ -347,6 +348,8 @@ class _SitesPageState extends State<SitesPage> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MqPage()));
               } else if (v == 'ftp') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FtpPage()));
+              } else if (v == 'camera') {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CameraPage()));
               } else if (v == 'shell') {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShellConsolePage()));
               } else if (v == 'audit') {
@@ -390,6 +393,8 @@ class _SitesPageState extends State<SitesPage> {
                 const PopupMenuItem(value: 'mq', child: ListTile(leading: Icon(Icons.low_priority), title: Text('Message Queue (คิวข้อมูล)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'ftp', child: ListTile(leading: Icon(Icons.drive_folder_upload), title: Text('FTP server'), dense: true)),
+              if (Api.instance.isAdmin)
+                const PopupMenuItem(value: 'camera', child: ListTile(leading: Icon(Icons.photo_camera), title: Text('Camera bridge (อ่านไฟล์จากกล้อง)'), dense: true)),
               if (Api.instance.isAdmin)
                 const PopupMenuItem(value: 'shell', child: ListTile(leading: Icon(Icons.terminal), title: Text('Server console (shell)'), dense: true)),
               if (Api.instance.isAdmin)

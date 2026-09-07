@@ -99,6 +99,8 @@ app.use('/api/gateways', require('./routes/gateway.routes'));
 app.use('/api/shares', require('./routes/shares.routes'));
 // mq does its own auth too (x-api-token for unattended producers/consumers)
 app.use('/api/mq', require('./routes/mq.routes'));
+// camera bridge: api-token may read, only a login may configure it
+app.use('/api/camera', require('./routes/camera.routes'));
 app.use('/api/netshares', authMiddleware, require('./routes/netshares.routes'));
 app.use('/api/monitors', authMiddleware, require('./routes/monitors.routes'));
 app.use('/api/ftp', authMiddleware, require('./routes/ftp.routes'));

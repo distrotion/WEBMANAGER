@@ -493,6 +493,60 @@ class Api {
     if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'delete failed');
   }
 
+  // ---- camera bridge (read a device's FTP tree over HTTP) ----
+  Future<Map<String, dynamic>> cameraStatus() async {
+    final r = await http.get(_u('/api/camera/status'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'camera status failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateCameraSettings(Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/camera/settings'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> testCamera() async {
+    final r = await http.post(_u('/api/camera/test'), headers: _headers);
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> cameraList(String path, {bool fresh = false}) async {
+    final base = _u('/api/camera/list');
+    final uri = base.replace(queryParameters: {
+      ...base.queryParameters,
+      if (path.isNotEmpty) 'path': path,
+      if (fresh) 'fresh': '1',
+    });
+    final r = await http.get(uri, headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'list failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<List<int>> cameraFileBytes(String path) async {
+    final base = _u('/api/camera/file');
+    final uri = base.replace(queryParameters: {...base.queryParameters, 'path': path});
+    final r = await http.get(uri, headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+    if (r.statusCode != 200) throw Exception('โหลดไม่ได้ (${r.statusCode})');
+    return r.bodyBytes;
+  }
+
+  Future<bool> cameraHasToken() async {
+    final r = await http.get(_u('/api/camera/token'), headers: _headers);
+    if (r.statusCode != 200) return false;
+    return jsonDecode(r.body)['hasToken'] == true;
+  }
+
+  Future<String> genCameraToken() async {
+    final r = await http.post(_u('/api/camera/token'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('generate failed');
+    return jsonDecode(r.body)['token'] as String;
+  }
+
+  Future<void> revokeCameraToken() async {
+    await http.delete(_u('/api/camera/token'), headers: _headers);
+  }
+
   // ---- uptime monitoring ----
   Future<List<Map<String, dynamic>>> monitors() async {
     final r = await http.get(_u('/api/monitors'), headers: _headers);
