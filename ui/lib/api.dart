@@ -531,6 +531,28 @@ class Api {
     return r.bodyBytes;
   }
 
+  Future<Map<String, dynamic>> cameraSyncStatus() async {
+    final r = await http.get(_u('/api/camera/sync'), headers: _headers);
+    if (r.statusCode != 200) throw Exception('sync status failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateCameraSyncSettings(Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/camera/sync/settings'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Run the pull now. Returns the run report; throws with the server's message
+  /// when it is refused (409 = already running) or the run itself failed.
+  Future<Map<String, dynamic>> runCameraSync() async {
+    final r = await http.post(_u('/api/camera/sync'), headers: _headers);
+    final body = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode == 200) return body;
+    if (r.statusCode == 502) return body; // partial failure — report still useful
+    throw Exception(body['error'] ?? 'sync failed');
+  }
+
   Future<bool> cameraHasToken() async {
     final r = await http.get(_u('/api/camera/token'), headers: _headers);
     if (r.statusCode != 200) return false;

@@ -240,6 +240,8 @@ class _CameraPageState extends State<CameraPage> {
           ),
         ),
         const SizedBox(height: 8),
+        const _SyncCard(),
+        const SizedBox(height: 8),
         _tokenCard(),
       ]),
     );
@@ -311,6 +313,209 @@ class _CameraPageState extends State<CameraPage> {
           const Text(
             'list ตอบ {folders:[{name}], files:[{name,size,mtime,mtime_raw}]} · ชื่อโฟลเดอร์ที่มีช่องว่างหรือ [ ] ต้อง urlencode',
             style: TextStyle(fontSize: 11, color: Colors.white38),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Copy changed images from the camera down to a folder on this server, on
+/// demand or once a day. Whatever reads that folder keeps working while the
+/// camera is powered off — which this one often is.
+class _SyncCard extends StatefulWidget {
+  const _SyncCard();
+  @override
+  State<_SyncCard> createState() => _SyncCardState();
+}
+
+class _SyncCardState extends State<_SyncCard> {
+  final _dest = TextEditingController();
+  final _files = TextEditingController(text: '000_model.png');
+  final _daily = TextEditingController();
+  bool _busy = false;
+  bool _running = false;
+  String? _error;
+  Map<String, dynamic>? _last;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _dest.dispose();
+    _files.dispose();
+    _daily.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await Api.instance.cameraSyncStatus();
+      setState(() {
+        _dest.text = '${s['dest'] ?? ''}';
+        _files.text = ((s['files'] as List?) ?? []).join(',');
+        _daily.text = '${s['dailyAt'] ?? ''}';
+        _running = s['running'] == true;
+        _last = s['last'] as Map<String, dynamic>?;
+      });
+    } catch (e) {
+      setState(() => _error = '$e'.replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await Api.instance.updateCameraSyncSettings({
+        'dest': _dest.text.trim(),
+        'files': _files.text.trim(),
+        'daily_at': _daily.text.trim(),
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('บันทึกแล้ว ✓')));
+      await _load();
+    } catch (e) {
+      setState(() => _error = '$e'.replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _run() async {
+    setState(() {
+      _busy = true;
+      _running = true;
+      _error = null;
+    });
+    try {
+      final r = await Api.instance.runCameraSync();
+      setState(() => _last = r);
+      if (mounted) {
+        final copied = (r['copied'] as List?)?.length ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(r['ok'] == true
+              ? 'ดึงเสร็จ — โหลดใหม่ $copied ไฟล์ · เหมือนเดิม ${r['skipped']}'
+              : 'ดึงเสร็จแต่มีปัญหา — พลาด ${(r['failed'] as List?)?.length ?? 0} ไฟล์'),
+        ));
+      }
+    } catch (e) {
+      setState(() => _error = '$e'.replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _running = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final last = _last;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.download_for_offline, size: 16),
+            const SizedBox(width: 8),
+            const Text('ดึงรูปเก็บไว้บนเครื่องนี้', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            if (_running) const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+          ]),
+          const SizedBox(height: 4),
+          const Text(
+            'คัดลอกเฉพาะไฟล์ที่เปลี่ยน (เทียบขนาดเป็นหลัก) ลงโฟลเดอร์ข้างล่าง · เขียนเป็น .part ก่อนแล้วค่อยเปลี่ยนชื่อ '
+            'ไฟล์ครึ่ง ๆ จึงไม่มีทางโผล่ · กล้องดับ = ข้ามรอบ ไม่ลบของเดิม',
+            style: TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+          const SizedBox(height: 10),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            SizedBox(
+              width: 380,
+              child: TextField(
+                controller: _dest,
+                decoration: const InputDecoration(
+                  labelText: 'โฟลเดอร์ปลายทางบนเครื่องนี้',
+                  hintText: r'C:\Users\Administrator\Desktop\autopackliquid',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 230,
+              child: TextField(
+                controller: _files,
+                decoration: const InputDecoration(
+                  labelText: 'เอาเฉพาะไฟล์ชื่อ (คั่นด้วย ,)',
+                  helperText: 'เว้นว่าง = เอาทุกไฟล์',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 150,
+              child: TextField(
+                controller: _daily,
+                decoration: const InputDecoration(
+                  labelText: 'ดึงอัตโนมัติ HH:MM',
+                  helperText: 'เว้นว่าง = สั่งเองเท่านั้น',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+          ]),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ),
+          if (last != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  'รอบล่าสุด (${last['trigger']}): โหลดใหม่ ${(last['copied'] as List?)?.length ?? 0} ไฟล์ '
+                  '${(((last['bytes'] as num?) ?? 0) / 1048576).toStringAsFixed(1)} MB · '
+                  'เหมือนเดิม ${last['skipped']} · พลาด ${(last['failed'] as List?)?.length ?? 0} · '
+                  '${last['programs']} program · ${last['ms']} ms',
+                  style: TextStyle(
+                      fontSize: 11.5, color: last['ok'] == true ? Colors.greenAccent : Colors.orangeAccent),
+                ),
+                if ((last['failed'] as List?)?.isNotEmpty ?? false)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      (last['failed'] as List)
+                          .take(3)
+                          .map((f) => '${f['path']}: ${f['error']}')
+                          .join('\n'),
+                      style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+                    ),
+                  ),
+              ]),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _run,
+                icon: const Icon(Icons.download, size: 16),
+                label: const Text('ดึงเดี๋ยวนี้'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(onPressed: _busy ? null : _save, child: const Text('บันทึกค่า')),
+            ]),
           ),
         ]),
       ),

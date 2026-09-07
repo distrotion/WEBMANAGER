@@ -91,6 +91,26 @@ router.get('/file', async (req, res) => {
   }
 });
 
+// ---- sync (pull images to local disk) ----
+// Triggering is allowed with the api-token: the consumer that reads the folder
+// is the one that knows when it wants fresh pictures, and a run cannot be
+// pointed anywhere — the destination and the file filter are config, which the
+// token cannot touch. Reading the report is equally harmless.
+const camerasync = require('../camerasync');
+
+router.post('/sync', async (req, res) => {
+  try {
+    const report = await camerasync.runOnce(req.user.username === 'api-token' ? 'api' : `manual:${req.user.username}`);
+    audit(req.user, 'camera-sync', `${report.copied.length} ไฟล์`, report.ok ? 'ok' : report.error || 'มีไฟล์ที่พลาด');
+    res.status(report.ok ? 200 : 502).json(report);
+  } catch (e) {
+    if (e.busy) return res.status(409).json({ error: e.message });
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.get('/sync', (req, res) => res.json(camerasync.status()));
+
 // ---- management (real login only) ----
 
 router.get('/status', manageOnly, (req, res) => res.json(camera.status()));
@@ -112,6 +132,23 @@ router.put('/settings', manageOnly, (req, res) => {
   camera.forgetCache();
   audit(req.user, 'camera-settings', settings.get('camera_host') || '(none)', root);
   res.json(camera.status());
+});
+
+// Sync settings are separate from the connection settings above so the two
+// forms can be saved independently.
+router.put('/sync/settings', manageOnly, (req, res) => {
+  const b = req.body || {};
+  const dest = String(b.dest || '').trim();
+  if (dest && !path.isAbsolute(dest)) return res.status(400).json({ error: 'โฟลเดอร์ปลายทางต้องเป็น absolute path' });
+  const daily = String(b.daily_at || '').trim();
+  if (daily && !/^([01]\d|2[0-3]):[0-5]\d$/.test(daily)) return res.status(400).json({ error: 'เวลาต้องเป็นรูปแบบ HH:MM' });
+  settings.set('camera_sync_dest', dest);
+  settings.set('camera_sync_source', String(b.source || 'Programs').trim());
+  settings.set('camera_sync_images_dir', String(b.images_dir || 'ModelImages').trim());
+  settings.set('camera_sync_files', String(b.files ?? '000_model.png').trim());
+  settings.set('camera_sync_daily_at', daily);
+  audit(req.user, 'camera-sync-settings', dest || '(none)', daily ? `daily ${daily}` : 'manual');
+  res.json(camerasync.status());
 });
 
 router.post('/test', manageOnly, async (req, res) => {

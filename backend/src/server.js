@@ -63,6 +63,9 @@ startSubsystem('monitor', () => require('./monitor').start());
 // FTP/FTPS server: off by default, starts only if it was left enabled.
 startSubsystem('ftp', () => require('./ftp').start());
 
+// Camera image sync: the daily-run clock. Manual pulls work without it.
+startSubsystem('camera-sync', () => require('./camerasync').start());
+
 const app = express();
 // The panel is served from this same origin and every other consumer (the ML
 // share puller, the fleet hub) is a server-side HTTP client, which CORS does not
