@@ -16,6 +16,7 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   verify-https    https 200, http still 200, cert SAN carries the server IP
   diff <a> <b>    compare two backups; any change outside this site's conf is flagged
   ftp-close       delete the temp FTP user                                                  [mutating]
+  sites-smoke save|check   before/after update.cmd on ANY host (WM_URL): every site port answers as before
 
 Mutating steps accept --dry-run (print the request, send nothing). Config via env:
   WM_URL (default http://172.23.10.34:8088)  WM_USER (admin)  WM_PASS (prompted if unset)
@@ -32,6 +33,7 @@ import socket
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from ftplib import FTP
 from pathlib import Path
@@ -409,6 +411,42 @@ def cmd_diff():
     print(f'only {own} differs (or nothing) — as expected')
 
 
+def cmd_sites_smoke():
+    # `sites-smoke save` before update.cmd on any host, `sites-smoke check` after:
+    # every enabled site port must answer exactly as before the restart
+    mode = ARGS[1] if len(ARGS) > 1 else ''
+    if mode not in ('save', 'check'):
+        die('usage: sites-smoke save|check   (set WM_URL to the host)')
+    host = urllib.parse.urlsplit(WM_URL).hostname
+    f = STATE_DIR / f'sites-{host}.json'
+    st, sites = api('GET', '/api/sites')
+    if st != 200:
+        die(f'/api/sites -> {st}')
+    now = {}
+    for s in sites:
+        if not s.get('direct_port') or not s.get('direct_port_enabled'):
+            continue
+        r = probe('GET', f'http://{host}:{s["direct_port"]}/')
+        now[s['name']] = {'port': s['direct_port'], **r}
+        print(f'  {s["name"]:32} :{s["direct_port"]:<6} {r["status"]} {r["type"]}')
+    st, health = api('GET', '/api/health')
+    print(f'  panel version: {(health or {}).get("version")}   sites total: {len(sites)}   with direct port: {len(now)}')
+    if mode == 'save':
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({'sites': now, 'total': len(sites)}, indent=1))
+        print(f'saved {f}')
+        return
+    if not f.exists():
+        die(f'no saved smoke for {host} — run sites-smoke save before the update')
+    before = json.loads(f.read_text())
+    bad = [n for n, v in before['sites'].items() if now.get(n) != v] + [n for n in now if n not in before['sites']]
+    if before['total'] != len(sites):
+        bad.append(f'site count {before["total"]} -> {len(sites)}')
+    if bad:
+        die(f'changed after update: {bad}')
+    print(f'{host}: all {len(now)} site ports answer exactly as before the update')
+
+
 def cmd_ftp_close():
     if not FTP_FILE.exists():
         print('no temp FTP user recorded')
@@ -428,6 +466,7 @@ COMMANDS = {
     'ftp-open': cmd_ftp_open, 'backup': cmd_backup, 'routes': cmd_routes, 'verify-routes': cmd_verify_routes,
     'build-defines': cmd_build_defines, 'verify-build': cmd_verify_build,
     'https': cmd_https, 'verify-https': cmd_verify_https, 'diff': cmd_diff, 'ftp-close': cmd_ftp_close,
+    'sites-smoke': cmd_sites_smoke,
 }
 
 if __name__ == '__main__':

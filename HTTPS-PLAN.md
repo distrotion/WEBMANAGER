@@ -105,10 +105,13 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
 ## Runbook 2026-09-20 (window หยุดทั้งวัน · ทำรอบเดียว)
 
 > ทุกขั้นมีคำสั่งใน `scripts/https-pilot.py` (รันจากเครื่อง dev · `WM_PASS` ทาง env · state/backup ที่ `~/.webmanager-pilot/` · ขั้นที่แก้ .34 มี `--dry-run`)
-> ลำดับ: `health` → `status` → `baseline`(ทำแล้ว 19 ก.ย.) → `ftp-open` → `backup before` → `routes` → `verify-routes` → `backup after-routes` → `diff before after-routes`
+> ลำดับ: (.32 ก่อน: `sites-smoke save`✓ → update → `sites-smoke check`) แล้ว .34: `sites-smoke save`✓ → update → `sites-smoke check` → `health` → `status` → `baseline`(ทำแล้ว 19 ก.ย.) → `ftp-open` → `backup before` → `routes` → `verify-routes` → `backup after-routes` → `diff before after-routes`
 > → `build-defines` → `./buildup.sh UI-SOI8GWPLC` → `verify-build` → `https` → `verify-https` → `backup after-https` → `diff before after-https` → `ftp-close`
 > `verify-*` ล้มเมื่อไหร่ = หยุดขั้นถัดไป · `verify-https` ตรวจ chain+IP SAN ด้วย CA จาก panel จริง (ไม่ bypass TLS)
 
+0-pre. **ซ้อมที่ .32 ก่อน** (เจ้าของเลือก 2026-09-19): `.32` อยู่ที่ `b6e68b6` (15 ส.ค.) → HEAD ข้าม migration หลายตัว (proxy_routes, sites.https_*, ftp_users, gateways.ftp_mode, camera) เจอปัญหาที่นี่ก่อนดีกว่า .34
+   mainservice: `WM_URL=http://172.23.10.32:8088 scripts/https-pilot.py sites-smoke save` (ทำแล้ว 19 ก.ย.: 3 ไซต์ · `TPK-POLICY-BACK:16190` ไม่ตอบอยู่แล้วก่อนอัปเดต — ไม่ใช่ผลจากอัปเดต)
+   เจ้าของที่ .32: `git pull` → `update.cmd` → mainservice: `... sites-smoke check` + health version ตรง HEAD → ผ่านแล้วค่อยไป .34
 0. **เจ้าของที่หน้าเครื่อง .34:** `git pull` แล้วดับเบิลคลิก `update.cmd` → mainservice เช็ค `curl http://172.23.10.34:8088/api/health` ต้องได้ version `bbda78b` (HEAD ปัจจุบัน) · เช็ค FTP/gateway/camera-sync กลับมา
 0b. (ถ้าเจ้าของอนุมัติ) FTP ชั่วคราว root=`nginx\conf.d` อ่านอย่างเดียว → สำรอง `ports/*.conf` + `front/*.conf` ไว้ diff หลังทุกขั้น · ลบบัญชีตอนจบ
 1. `POST /api/sites/18/routes` ×2: `{path_prefix:"/api", target_url:"http://127.0.0.1:2520", strip_prefix:true, sse:true}` และ `{path_prefix:"/auth", target_url:"http://172.23.10.34:15000", strip_prefix:true}` (sse ทั้ง /api เพราะ `/gw/stream` อยู่ใต้ prefix เดียวกัน — proxy_buffering off กับ json ปกติไม่มีผลเสีย)
