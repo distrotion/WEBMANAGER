@@ -68,3 +68,47 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
 - (ก) ข้อ 1-4 มีคำตอบ + วันที่ ✓ (2026-09-19, เจ้าของทางแชท)
 - (ข) ข้อ 5 มีตาราง + หลักฐานดิบ ✓
 - (ค) สรุป: **ไปต่อได้** — เฟส 1 เสร็จแล้ว (`54ba98d`) · เฟส 2 ขั้น 1/3/5 พร้อมทำเมื่อเจ้าของให้จังหวะ deploy ลง .34 · ขั้น 6 (สลับพอร์ตจริง) **ไม่ทำ** ตามข้อ 4
+
+## สำรวจเพิ่ม 2026-09-19 (ก่อน window พรุ่งนี้ · อ่านอย่างเดียว ไม่แตะ .34)
+
+**Baseline ยิงตรง (ไว้เทียบหลังใส่เส้นทาง — status ต้องเท่ากันทุกเส้น):**
+
+| ปลายทาง | path ที่ UI-SOI8GWPLC เรียก | status ตรง |
+|---|---|---|
+| :2520 | `/gw/plcs` `/qc_peers` `/plc_source` `/register_map` `/gw_log` | 200 json |
+| :2520 | `/gw/stream` | 200 `text/event-stream` (SSE จริง) |
+| :2520 | `/gw/tags` (ไม่มี query) | 400 json |
+| :2520 | `/` `/FATA`(GET) `/version.json` | 404 (UI ไม่เรียก root — ปกติ) |
+| :15000 | GET `/gwplcstate` `/gwplcregistermap` · POST `/login` `/getitemregistry` (body `{}`) | 200 json |
+| :15000 | POST `/gwplcregistermap` (body `{}`) | 400 json |
+
+- **CORS:** ทั้ง :2520 และ :15000 ตอบ `Access-Control-Allow-Origin: *` → Origin เปลี่ยนเป็น `https://172.23.10.34:2443` ไม่มีผล · proxy ส่ง `Host $host`, `X-Forwarded-Proto $scheme` (nginx.js PROXY_HDR) — backend ไม่เช็ค Host
+- **nginx บน .34 = 1.28.0** → `http2 on;` ใช้ได้ (ต้อง ≥1.25.1) · สมมติว่า Windows build มี `http_ssl_module` (official build มีทุกรุ่น) — ยืนยันจริงตอน `nginx -t` ผ่านในขั้น 3
+- **CA ยังไม่มีบน .34:** `GET :8088/panel-ca.crt` → 404 "no CA yet" · FTP บน .34 เป็น FTP เปล่า (`tls:false`) จึงไม่เคยสร้าง panel cert/CA · `issueCert()` → `ensureCa()` จะสร้าง CA ตอนขั้น 3 → **ดาวน์โหลด CA (ขั้น 4) ได้หลังขั้น 3 เท่านั้น** · FTP เดิมไม่กระทบ
+- **ตอน restart wm-manager:** `bootstrapPrefix()` เขียน nginx.conf ใหม่ (เพิ่ม `map $connection_upgrade`) แต่ไม่ reload · nginx เป็น Windows service แยก → **หน้าเว็บทุกพอร์ตยังเสิร์ฟต่อระหว่างอัปเดต** · nginx.conf ใหม่มีผลตอน reload ครั้งแรก (ขั้น 1) ซึ่งผ่าน `applyConfig` nginx -t + คืนไฟล์อัตโนมัติถ้าพัง
+- **อ่าน conf.d บน .34 ระยะไกลไม่ได้:** `GET /api/shares` = `[]` ไม่มี share · ถ้าจะสำรอง/diff conf.d ก่อน reload ตามข้อกำหนดใน #437 ต้องมี FTP account ชั่วคราว root=`nginx\conf.d` (อ่านอย่างเดียว) — ขอเจ้าของใน window · ไม่มีก็พึ่ง snapshot/restore ของ applyConfig
+- **เวอร์ชัน fleet:** .34 `f4ee697` · .32 `b6e68b6` · .40 `f4ee697` · .168 `43d6b91` (ยังไม่มี monitors/camera)
+
+**ขอบเขต #438 (สำรวจ source 5 UI ที่เหลือ):**
+
+| UI | endpoint กำหนดที่ | ปลายทาง (host:port) | ข้อสังเกต |
+|---|---|---|---|
+| automobile-soi8 :6500 | `lib/data/global.dart:21` const `serverG` | .34:17000 | ไม่มี define → ต้องแก้ const เป็น `/api/` |
+| soi8-adjust-app :2710 | `lib/config.dart:4,11` `String.fromEnvironment('ADJUST_BACKEND'/'ADJUST_AUTH')` default localhost:2701 / .34:15000 | .34:2701, .34:15000 | **ไม่อยู่ใน buildup.sh** — build ด้วย dart-define เอง (แบบเดียวกับ GWPLC) |
+| UI-INVENTORY :7250 | `lib/data/global.dart:67-68` const | .34:18000, .34:18010 | ไม่มี define |
+| SOI8QCFINAL :6010 | `lib/data/server_url.dart:4`, `global.dart:57,62` **+ hardcode 4 ไฟล์** (`item_registry_page.dart:12`, `master_v2_page.dart:21`, `P12PROGRESS/PROGRESS.dart:36`, `main_master_v2_demo.dart:52`) | .34:15000, .34:15010, **.51:6001 (OCR)**, **iframe http://.34:2710** | iframe http ในหน้า https = mixed content ถูกบล็อก |
+| soi8-superapp-app :7000 | `global.dart:74-77` + hardcode ~10 หน้า (P108/P145/P146/P147/P148/P143…) | .34:18000/15000/18010, **.168:14094**, iframe **.168:12135/12130/12140/12121**, .168:5510, iframe .34:2710/6010/6500, .32:10000, **ws://.34:2520/gw/weightstream**, POST **172.101.5.6:1880** | มากสุด — ท้ายสุดตามแผน |
+
+**ข้อสรุปใหม่สำหรับ #438 — ลำดับบังคับจาก iframe:** เบราว์เซอร์บล็อก `<iframe src="http://…">` ในหน้า https (blockable mixed content) → **แอปที่ถูกฝังต้องเป็น https ก่อนแอปที่ฝัง** (callee-before-caller ใช้กับ iframe ด้วย):
+`adjust :2710` → ก่อน `SOI8QCFINAL :6010` และ `superapp` · `:6010`/`:6500` → ก่อน `superapp` · แอปบน **.168** (4 iframe + backend :14094) ต้องรอ .168 อัปเดต (#439) หรือ proxy ผ่าน nginx .34 (route target เป็น host อื่นได้) · `ws://` ของ superapp ต้องเป็น `wss://` ผ่าน route (`$connection_upgrade` รองรับแล้ว) · `172.101.5.6:1880` (Node-RED คนละวง) proxy ผ่าน .34 ได้ถ้าเจ้าของอนุญาต (#439)
+
+## Runbook 2026-09-20 (window หยุดทั้งวัน · ทำรอบเดียว)
+
+0. **เจ้าของที่หน้าเครื่อง .34:** `git pull` แล้วดับเบิลคลิก `update.cmd` → mainservice เช็ค `curl http://172.23.10.34:8088/api/health` ต้องได้ version `bbda78b` (HEAD ปัจจุบัน) · เช็ค FTP/gateway/camera-sync กลับมา
+0b. (ถ้าเจ้าของอนุมัติ) FTP ชั่วคราว root=`nginx\conf.d` อ่านอย่างเดียว → สำรอง `ports/*.conf` + `front/*.conf` ไว้ diff หลังทุกขั้น · ลบบัญชีตอนจบ
+1. `POST /api/sites/18/routes` ×2: `{path_prefix:"/api", target_url:"http://127.0.0.1:2520", strip_prefix:true, sse:true}` และ `{path_prefix:"/auth", target_url:"http://172.23.10.34:15000", strip_prefix:true}` (sse ทั้ง /api เพราะ `/gw/stream` อยู่ใต้ prefix เดียวกัน — proxy_buffering off กับ json ปกติไม่มีผลเสีย)
+   ตรวจ: ทุก path ในตาราง baseline ยิงผ่าน `http://172.23.10.34:2521/api/<p>` และ `/auth/<p>` **status เท่า baseline ทุกเส้น** · `curl -N -m 5 http://172.23.10.34:2521/api/gw/stream` ต้องเห็น event ไหล · diff conf ไซต์อื่นต้องไม่เปลี่ยน
+2. แก้ `SOI8MASTER/buildup.sh:14` define → `GWPLC_BACKEND=/api` `GWPLC_AUTH=/auth/` → `./buildup.sh UI-SOI8GWPLC` → autodeploy ขึ้น .34 · ตรวจ `curl -s http://172.23.10.34:2521/main.dart.js | grep -c "172\.23\.10\.34"` = **0** · เปิดหน้า :2521 ใช้งานได้จริง (login/PLC list/stream) — ระวัง fetchMonitor/fetchQcLink กลืน error
+3. `POST /api/sites/18/https/enable {https_port:2443}` → ตรวจ `curl -k -o /dev/null -w "%{http_code}" https://172.23.10.34:2443/` = 200 · `openssl s_client -connect 172.23.10.34:2443 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName` มี `IP:172.23.10.34` · `http://…:2521/` ยัง 200 · firewall 2443 เปิดอัตโนมัติ (ssl.routes.js:78)
+4. เครื่องทดสอบ (PC/Windows): โหลด `http://172.23.10.34:8088/panel-ca.crt` → Trusted Root → เปิด `https://172.23.10.34:2443` กุญแจไม่เตือน · ทดสอบ login/stream/write
+5. ปิดงาน: FTP/gateway/camera-sync/MQ ขึ้นครบ · ลบ FTP ชั่วคราว (ถ้ามี) · บันทึกผลลง #437 · **ขั้น 6 ไม่ทำ**
