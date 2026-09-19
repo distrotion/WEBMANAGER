@@ -888,6 +888,28 @@ class Api {
     throw Exception(message);
   }
 
+  // ---- proxy routes (#436) — a static site's direct port proxying to any host:port ----
+  Future<List<Map<String, dynamic>>> proxyRoutes(int siteId) async {
+    final r = await http.get(_u('/api/sites/$siteId/routes'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'routes failed');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> createProxyRoute(int siteId, Map<String, dynamic> body) async {
+    final r = await http.post(_u('/api/sites/$siteId/routes'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 201) throw Exception(jsonDecode(r.body)['error'] ?? 'create failed');
+  }
+
+  Future<void> updateProxyRoute(int siteId, int routeId, Map<String, dynamic> body) async {
+    final r = await http.put(_u('/api/sites/$siteId/routes/$routeId'), headers: _headers, body: jsonEncode(body));
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'update failed');
+  }
+
+  Future<void> deleteProxyRoute(int siteId, int routeId) async {
+    final r = await http.delete(_u('/api/sites/$siteId/routes/$routeId'), headers: _headers);
+    if (r.statusCode != 200) throw Exception(jsonDecode(r.body)['error'] ?? 'delete failed');
+  }
+
   /// Break a deploy lock left behind by a job that never finished.
   Future<Map<String, dynamic>> releaseDeployLock(int id) async {
     final r = await http.post(_u('/api/sites/$id/deploy-lock/release'), headers: _headers);

@@ -19,6 +19,7 @@ import 'mq.dart';
 import 'ftp.dart';
 import 'camera.dart';
 import 'autodeploy_log.dart';
+import 'proxy_routes.dart';
 import 'timefmt.dart';
 
 // True when the browser tab is hidden/minimised — live pollers skip work then,
@@ -1388,6 +1389,38 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
     _refreshSite();
   }
 
+  // Opens https as a SECOND listener alongside the existing direct_port —
+  // never a replacement — so the plain-http port stays reachable the whole
+  // time (the "open the old one alongside" rule from the migration plan).
+  Future<void> _enableHttps() async {
+    final ctrl = TextEditingController();
+    final port = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('เปิด HTTPS (local CA)'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+            'เปิดเป็นพอร์ตที่สองแยกจาก :${s['direct_port']} เดิม — ของเดิมยังเปิดตามปกติระหว่างทดสอบ '
+            'ต้องลง panel-ca.crt เป็น Trusted Root บนเครื่องที่จะเข้า ไม่งั้นเบราว์เซอร์เตือน',
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'https port (พอร์ตทดสอบ)', hintText: 'เช่น 2443'),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('ยกเลิก')),
+          FilledButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('เปิด')),
+        ],
+      ),
+    );
+    if (port == null || port.isEmpty) return;
+    await _act('https/enable', {'https_port': int.tryParse(port)});
+  }
+
   // Pull the site row again so `deploying` (and status) reflect what just
   // happened, whether the action was accepted or refused.
   Future<void> _refreshSite() async {
@@ -1644,6 +1677,16 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
                 _btn('Reload nginx', Icons.refresh, () => _act('reload')),
                 if (hasExposure) _btn('Issue SSL', Icons.lock, () => _act('ssl/issue')),
                 if (hasExposure) _btn('Disable SSL', Icons.lock_open, () => _act('ssl/disable')),
+                if (isStatic && s['direct_port'] != null && portOn)
+                  _btn('เส้นทาง proxy', Icons.alt_route, () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ProxyRoutesPage(siteId: s['id'] as int, siteName: s['name'] as String),
+                    ));
+                  }),
+                if (isStatic && s['direct_port'] != null && portOn)
+                  s['https_enabled'] == true
+                      ? _btn('ปิด HTTPS (พอร์ต ${s['https_port']})', Icons.lock_open, () => _act('https/disable'))
+                      : _btn('เปิด HTTPS (local CA, พอร์ตแยก)', Icons.https, _enableHttps),
               ]),
             if (Api.instance.isAdmin)
               _group('Admin', [

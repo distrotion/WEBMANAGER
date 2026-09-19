@@ -111,6 +111,7 @@ app.use('/api/sites', authMiddleware, require('./routes/sites.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/deploy.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/process.routes'));
 app.use('/api/sites', authMiddleware, require('./routes/ssl.routes'));
+app.use('/api/sites', authMiddleware, require('./routes/proxyroutes.routes'));
 
 // Serve the built Flutter UI if present (one-process deploy). nginx can also serve it.
 const uiDir =

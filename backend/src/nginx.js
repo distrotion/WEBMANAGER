@@ -6,13 +6,28 @@ const db = require('./db');
 const { run } = require('./runner');
 const { emitLog } = require('./logbus');
 
+// $connection_upgrade (defined once in mainConf()'s http block) is "upgrade"
+// only when the client actually sent an Upgrade header, "close" otherwise —
+// the literal "upgrade" this used to send on EVERY proxied request is
+// harmless for plain HTTP but is the wrong value on a keepalive connection a
+// client reuses for a later WebSocket attempt on the same socket.
 const PROXY_HDR = `        proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;`;
+
+// Added only inside a route's location block, and only when the route is
+// marked sse=1 — a normal proxied API call must keep nginx's buffering, or a
+// slow client would tie up the upstream connection. Without this, an SSE
+// stream sits in nginx's buffer and arrives in one burst on close instead of
+// as it happens — the exact "looks fine, actually broken" failure #436 warns
+// about testing for.
+const SSE_HDR = `        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;`;
 
 const TLS = `    ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
@@ -74,6 +89,15 @@ http {
     sendfile    on;
     keepalive_timeout 65;
 
+    # Upgrade→Connection mapping for proxied WebSocket/SSE, shared by every
+    # location that includes PROXY_HDR (see nginx.js). Declared once here
+    # instead of hardcoding "upgrade" per-location, which used to send that
+    # value on every plain HTTP request too.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
     gzip on;
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;
     gzip_min_length 1024;
@@ -119,25 +143,124 @@ function cleanPath(p, fallback) {
   return '/' + String(p || fallback).replace(/^\/+|\/+$/g, '');
 }
 
+// One location block per enabled proxy_routes row for this site — see #436:
+// rendered into the SAME file writePortConf() writes (never into front/,
+// which rebuildFront() wipes on every unrelated site's edit).
+function routeLocations(siteId) {
+  const rows = db
+    .prepare('SELECT * FROM proxy_routes WHERE site_id=? AND enabled=1 ORDER BY path_prefix')
+    .all(siteId);
+  return rows.map((r) => {
+    const prefix = cleanPath(r.path_prefix, '');
+    const target = r.target_url.replace(/\/+$/, '');
+    // strip_prefix=1: proxy_pass carries a URI (trailing /), so nginx replaces
+    // the matched location prefix before forwarding — the backend never sees
+    // /api/gw. strip_prefix=0: proxy_pass is bare host:port with no URI, so
+    // nginx forwards the original request URI untouched.
+    const passTarget = r.strip_prefix ? `${target}/` : target;
+    return `    location ${prefix}/ {\n        proxy_pass ${passTarget};\n${PROXY_HDR}\n${
+      r.sse ? SSE_HDR + '\n' : ''
+    }    }`;
+  });
+}
+
 // ---- Layer 1: direct-port access (static is served by nginx; process apps own the port) ----
+// Process runtimes (node/nodered) bind direct_port themselves via PM2 — nginx
+// never listens there, so proxy_routes/https only ever attach to a STATIC
+// site's block, which is the one case nginx already owns the port.
 function writePortConf(site) {
   ensureDirs();
   const file = path.join(config.paths.nginxPorts, `${site.name}.conf`);
   const wantBlock = site.runtime === 'static' && site.direct_port && site.direct_port_enabled;
   if (wantBlock) {
-    const conf = `# layer1 direct-port for ${site.name}
+    const routes = routeLocations(site.id);
+    const body = `    root ${currentPath(site)};
+    index index.html;
+${routes.length ? routes.join('\n\n') + '\n\n' : ''}    location / { try_files $uri $uri/ /index.html; }`;
+    let conf = `# layer1 direct-port for ${site.name}
 server {
     listen ${site.direct_port};
     server_name _;
-    root ${currentPath(site)};
-    index index.html;
-    location / { try_files $uri $uri/ /index.html; }
+${body}
 }
 `;
+    // Opt-in second listener on https_port, same cert layout tls.issueCert()
+    // and ssl.js both write (certs/<site.name>/fullchain.pem+privkey.pem).
+    // Default (https_enabled=0) renders NOTHING extra — a site that has never
+    // touched this must get byte-identical output to before this feature
+    // existed, since writePortConf() is the one function every site's config
+    // renders through on every deploy.
+    if (site.https_enabled && site.https_port) {
+      const base = path.join(config.paths.certs, site.name).replace(/\\/g, '/');
+      conf += `
+# layer1 direct-port TLS for ${site.name}
+server {
+    listen ${site.https_port} ssl;
+    http2 on;
+    server_name _;
+    ssl_certificate ${base}/fullchain.pem;
+    ssl_certificate_key ${base}/privkey.pem;
+${TLS}
+${body}
+}
+`;
+    }
     fs.writeFileSync(file, conf, 'utf8');
   } else if (fs.existsSync(file)) {
     fs.unlinkSync(file);
   }
+}
+
+// ---- reversible config writes ----
+// Snapshot every .conf under ports/ and front/ before a mutation, so a failed
+// `nginx -t` can restore the exact bytes that were serving before — not just
+// skip the reload. Without this, writePortConf()/rebuildFront() write-then-
+// overwrite with no backup, and a broken file left on disk only shows up on
+// the NEXT nginx restart (service restart, reboot, or reload()'s own
+// fallback to `start` when `-s reload` fails) — by then it takes every site
+// down at once, not just the one being edited. See #436/#437/#438.
+function snapshotConfigs() {
+  const snap = {};
+  for (const dir of [config.paths.nginxPorts, config.paths.nginxFront]) {
+    const files = {};
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith('.conf')) files[f] = fs.readFileSync(path.join(dir, f), 'utf8');
+      }
+    }
+    snap[dir] = files;
+  }
+  return snap;
+}
+
+function restoreConfigs(snap) {
+  for (const [dir, files] of Object.entries(snap)) {
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith('.conf') && !(f in files)) fs.unlinkSync(path.join(dir, f));
+      }
+    }
+    for (const [f, content] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, f), content, 'utf8');
+    }
+  }
+}
+
+// Run `mutate` (a writePortConf/rebuildFront call, or several), test the
+// result, and only keep it if the test passes — otherwise every .conf file
+// under ports/ and front/ is restored to exactly what it was, and the caller
+// gets the real `nginx -t` error text to show the operator. Callers reload()
+// themselves on ok:true; this only decides whether the write sticks.
+async function applyConfig(mutate, channel = 'system') {
+  const snap = snapshotConfigs();
+  mutate();
+  const t = await test(channel);
+  if (t.code !== 0) {
+    restoreConfigs(snap);
+    return { ok: false, error: (t.error || t.out || 'nginx -t failed').trim() };
+  }
+  return { ok: true };
 }
 
 // ---- Layer 2: front (80/443 + TLS) ----
@@ -294,6 +417,7 @@ module.exports = {
   writePortConf,
   rebuildFront,
   removeSiteConfigs,
+  applyConfig,
   test,
   reload,
   start,

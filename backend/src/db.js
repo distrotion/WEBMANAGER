@@ -229,6 +229,27 @@ CREATE TABLE IF NOT EXISTS ftp_users (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Reverse-proxy routes for the "one HTTPS edge" migration: a site's own
+-- direct-port block gets one location per row, proxying a path prefix to an
+-- arbitrary host:port — not just 127.0.0.1 like locationFor()'s existing
+-- process-runtime proxying. This is what lets a plain-http backend (on this
+-- box or another) sit behind the site's single https origin, so the browser
+-- never sees a second origin and mixed-content blocking never triggers.
+-- Rendered into the SAME conf file writePortConf() already writes
+-- (config.paths.nginxPorts/<site>.conf), never into the front/ folder that
+-- rebuildFront() wipes on every unrelated site edit.
+CREATE TABLE IF NOT EXISTS proxy_routes (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_id      INTEGER NOT NULL,             -- which site's direct-port conf this location is added to
+  path_prefix  TEXT NOT NULL,                -- e.g. /api/gw  (leading slash, no trailing slash)
+  target_url   TEXT NOT NULL,                -- e.g. http://172.23.10.34:15000 — any host, not just localhost
+  strip_prefix INTEGER NOT NULL DEFAULT 1,   -- 1 = nginx drops path_prefix before proxying (proxy_pass ends in /)
+  sse          INTEGER NOT NULL DEFAULT 0,   -- 1 = proxy_buffering off + long read timeout, for event streams
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_routes_site_prefix ON proxy_routes(site_id, path_prefix);
+
 CREATE TABLE IF NOT EXISTS net_shares (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,
@@ -287,6 +308,13 @@ const MIGRATIONS = {
     // look dead and be rolled back for no reason, so this must never switch itself
     // on for a site the operator has not checked.
     ['health_check', "TEXT DEFAULT 'off'"],
+    // https on the SAME direct_port's box, as a second listener — not a
+    // replacement for direct_port. Opt-in, default off: writePortConf() must
+    // render byte-identical output for every site that hasn't touched this,
+    // since it is the one function every site's config renders through on
+    // every deploy. See nginx.js writePortConf().
+    ['https_port', 'INTEGER'],
+    ['https_enabled', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   monitors: [
     // Added after the monitors table first shipped (custom/replication checks).

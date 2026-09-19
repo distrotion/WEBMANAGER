@@ -110,6 +110,62 @@ function makeServerCert() {
   emitLog('system', `[https] issued server cert (SAN: ${localIps().join(', ')}, ${os.hostname()})`);
 }
 
+// Issue a cert for something OTHER than the panel itself (a proxied site),
+// signed by the same local CA so one CA install on a client machine covers
+// everything. Deliberately separate from makeServerCert(): that function
+// overwrites certs/panel/panel.crt|key, which ftp.js's ensureServerCert() also
+// serves for FTPS — reusing it here would silently re-key FTPS and, via
+// regenerate()/start(), drop every live panel HTTPS connection. This writes
+// its own file pair under certs/<key>/ instead, the same layout ssl.js's
+// win-acme path already uses, so nginx.js needs no change to read either kind.
+//
+// `names` must include every literal address a browser will type — SAN
+// checking is exact-match, so a site reached by raw IP (172.23.10.34, no DNS
+// name) needs that IP as an iPAddress entry or the handshake fails even with
+// the CA trusted. Caller decides what belongs there; localIps() is available
+// via module.exports for building that list.
+function issueCert(key, names) {
+  if (!key || /[\\/]/.test(key)) throw new Error('issueCert: key must be a plain folder name');
+  const list = (names || []).filter(Boolean);
+  if (!list.length) throw new Error('issueCert: at least one name/IP is required');
+
+  const ca = ensureCa();
+  const dir = path.join(config.paths.certs, key);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '03' + forge.util.bytesToHex(forge.random.getBytesSync(8));
+  const now = new Date();
+  cert.validity.notBefore = new Date(now.getTime() - 86400000);
+  cert.validity.notAfter = new Date(now.getFullYear() + 5, now.getMonth(), now.getDate());
+  const U = forge.asn1.Type.UTF8;
+  cert.setSubject([{ name: 'commonName', value: key, valueTagClass: U }]);
+  cert.setIssuer(ca.cert.subject.attributes.map((a) => ({ ...a, valueTagClass: U })));
+  const altNames = list.map((n) =>
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(n) ? { type: 7, ip: n } : { type: 2, value: n }
+  );
+  cert.setExtensions([
+    { name: 'basicConstraints', cA: false },
+    { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+    { name: 'extKeyUsage', serverAuth: true },
+    { name: 'subjectAltName', altNames },
+  ]);
+  cert.sign(ca.key, forge.md.sha256.create());
+
+  // fullchain = leaf + CA, so a client that only trusts the CA (not this leaf
+  // directly) can still build the chain — same shape ssl.js's win-acme output
+  // and nginx.js's ssl_certificate directive already expect.
+  const fullchain = forge.pki.certificateToPem(cert) + forge.pki.certificateToPem(ca.cert);
+  fs.writeFileSync(path.join(dir, 'fullchain.pem'), fullchain, 'utf8');
+  fs.writeFileSync(path.join(dir, 'privkey.pem'), forge.pki.privateKeyToPem(keys.privateKey), {
+    mode: 0o600,
+  });
+  emitLog('system', `[tls] issued cert for "${key}" (SAN: ${list.join(', ')})`);
+  return { certPath: path.join(dir, 'fullchain.pem'), keyPath: path.join(dir, 'privkey.pem') };
+}
+
 // Remember the express app + ws upgrade handler so start() can reuse them.
 function attach(app, onUpgrade) {
   _app = app;
@@ -182,4 +238,15 @@ function status() {
   };
 }
 
-module.exports = { attach, start, stop, regenerate, status, caCertPath, ensureServerCert, localIps, HTTPS_PORT };
+module.exports = {
+  attach,
+  start,
+  stop,
+  regenerate,
+  status,
+  caCertPath,
+  ensureServerCert,
+  issueCert,
+  localIps,
+  HTTPS_PORT,
+};

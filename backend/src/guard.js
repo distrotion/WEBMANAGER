@@ -149,6 +149,33 @@ function siteFields(b, { requireName } = {}) {
   return checks.find(Boolean) || null;
 }
 
+// A proxy_routes.path_prefix becomes an nginx `location` — same injection
+// surface as nginxField, plus it is matched against real incoming request
+// paths, so whitespace (which nginx's location parser treats as a token
+// boundary) is rejected too, not just the control characters.
+function routePrefix(v) {
+  const s = String(v || '').trim();
+  if (!s) return 'path_prefix required';
+  if (!s.startsWith('/')) return 'path_prefix must start with /';
+  if (/[\r\n;{}\0\s]/.test(s)) return 'path_prefix may not contain whitespace, newlines, ; { or }';
+  if (!/^\/[A-Za-z0-9._\-/]*$/.test(s)) return 'path_prefix contains invalid characters';
+  if (s.length > 200) return 'path_prefix too long';
+  return null;
+}
+
+// target_url is interpolated straight into `proxy_pass <target>;` — unlike
+// gateway.dest_host/dest_port (separate columns), this is one string, so it
+// is validated as a whole URL rather than as a bare hostname.
+function routeTarget(v) {
+  const s = String(v || '').trim();
+  if (!s) return 'target_url required';
+  if (/[\r\n;{}\0\s]/.test(s)) return 'target_url may not contain whitespace, newlines, ; { or }';
+  if (!/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~%-]*)*$/.test(s)) {
+    return 'target_url must be http(s)://host[:port][/path]';
+  }
+  return null;
+}
+
 module.exports = {
   adminOnly,
   siteName,
@@ -161,4 +188,6 @@ module.exports = {
   count,
   healthMode,
   siteFields,
+  routePrefix,
+  routeTarget,
 };
