@@ -153,3 +153,12 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
   `location = /` if deny → 403, `try_files /index.html` · `location = /index.html` if deny → 403 · `location /` `try_files $uri =404` (ไม่มี SPA fallback) · sub_filter ทั้ง 3 location
 - เป็น **scope gate ไม่ใช่ auth** — หลังโหลดแอปแล้ว navigate ในแอปไม่ผ่าน nginx · หน้า NON-SCADA "ไม่ต้องล็อกอิน" อยู่แล้ว
 - ตรวจกับ nginx บน Mac: `/` 403 · `/?tabletnonscada` 200 · `/?x=1&tabletnonscada=1` 200 · `/?nottabletnonscada` 403 · `/index.html` (document) 403 · curl 403 · SW prefetch (`empty`) 200 · `/somepath` 404 · asset 200 · `verify-https` ยิงชุดเดียวกันนี้บนเครื่องจริง
+
+### ผลซ้อมบน .32 — 2026-09-20 21:45 (ขั้น C ผ่านครบ · รอขั้น D tablet)
+
+- .32 อัปเป็น `4993344` ผ่าน `https-pilot.py update` (self-update API ของภารกิจ 2) · `sites-smoke check` 5 ไซต์เดิมตอบเหมือนก่อน
+- site ทดสอบ **`superapp` id 16** static :7000 repo `soi8-superapp-app-deploy` **autodeploy ปิด** · deploy `faa6e72` (= production .34)
+- route 8 เส้น + `rewrite_from` · `verify-routes` 8/8 ตรง baseline (รอบแรกหลัง reload มี 4 เส้นตอบ 0 ชั่วคราว รอบสองผ่านหมด — ยิงซ้ำก่อนสรุป)
+- `https/enable {https_port:7002, entry_query:"tabletnonscada"}` → `verify-https`: chain+SAN ผ่าน CA กลาง · entry gate 7/7 (`/` 403 · `/?tabletnonscada` 200 · `/index.html` 403 · curl 403 · SW prefetch 200 · asset 200 · `/nope` 404) · **http :7000 ยัง 200 ไม่มี token**
+- `verify-build`: https absolute 0 / relative 8 · http absolute 8 / relative 0 · http == repo `faa6e72` (CRLF-blind — Windows checkout autocrlf ทำให้ไฟล์บนเครื่องเป็น CRLF อยู่ก่อนแล้ว ไม่เกี่ยว gate) · **https == http + 8 swaps เป๊ะ**
+- ขั้น D: tablet ลง CA `http://172.23.10.32:8088/panel-ca.crt` → เปิด `https://172.23.10.32:7002/?tabletnonscada` → ยิง barcode ด้วยกล้อง → บันทึกผ่าน backend .34 จริง

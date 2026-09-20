@@ -392,12 +392,21 @@ def cmd_verify_build():
         die('http bundle was rewritten — sub_filter leaked into the http block; this must never happen')
     local = DEPLOY_DIR / 'main.dart.js'
     if local.exists():
-        same = local.read_bytes() == raw
-        print(f'  http bytes == {local}: {"YES" if same else "NO"}')
+        # the Windows checkout on the host has git autocrlf on, so the served
+        # file carries CRLF where the repo has LF — compare line-ending-blind
+        same = local.read_bytes().replace(b'\r\n', b'\n') == raw.replace(b'\r\n', b'\n')
+        print(f'  http bytes == {local} (CRLF-blind): {"YES" if same else "NO"}')
         if not same:
             die('http main.dart.js differs from the local deploy repo — different commit deployed, or the http block was touched')
     else:
         print(f'  (no local deploy checkout at {local} — byte-compare skipped; set DEPLOY_DIR)')
+    # and the https body must be the http body plus exactly the 8 swaps, nothing else
+    expect = raw
+    for a, r in RELATIVE_BASES.values():
+        expect = expect.replace(a.encode(), r.encode())
+    print(f'  https bytes == http bytes + {len(RELATIVE_BASES)} swaps: {"YES" if expect.decode(errors="replace") == https_js else "NO"}')
+    if expect.decode(errors='replace') != https_js:
+        die('https bundle differs from http bundle beyond the URL swaps')
     print('gate ok: https bundle rewritten to routes, http bundle untouched')
 
 
@@ -425,8 +434,10 @@ def cmd_verify_https():
     # including the IP-SAN match (no verification bypass)
     ctx = ssl.create_default_context(cadata=ca_pem.decode())
     try:
-        with urllib.request.urlopen(f'https://{SERVER_IP}:{HTTPS_PORT}/', context=ctx, timeout=10) as r:
-            print(f'  https :{HTTPS_PORT} -> {r.status} (chain + IP SAN verified against panel CA)')
+        entry = f'/?{ENTRY_QUERY}' if ENTRY_QUERY else '/'
+        req = urllib.request.Request(f'https://{SERVER_IP}:{HTTPS_PORT}{entry}', headers={'Sec-Fetch-Dest': 'document'})
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+            print(f'  https :{HTTPS_PORT}{entry} -> {r.status} (chain + IP SAN verified against panel CA)')
             if r.status != 200:
                 die('https listener not serving 200')
     except ssl.SSLError as e:
