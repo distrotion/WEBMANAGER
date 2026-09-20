@@ -447,11 +447,27 @@ async function reload(channel = 'system') {
   return run(config.nginx.exe, base, { channel });
 }
 
-function start(channel = 'system') {
+// On Windows nginx is registered as a service (install.ps1). Starting it as a
+// bare process instead makes it a child of the manager: it dies with the
+// manager's process tree on every restart/self-update while the service stays
+// Stopped, so nothing brings the sites back. Prefer the service when it exists.
+async function winService(action, channel) {
+  if (process.platform !== 'win32') return null;
+  const q = await run('sc', ['query', 'nginx'], { channel: 'silent', timeoutMs: 15_000 });
+  if (q.code !== 0) return null; // no such service: dev-style install
+  return run('net', [action, 'nginx'], { channel, timeoutMs: 60_000 });
+}
+
+async function start(channel = 'system') {
+  const r = await winService('start', channel);
+  if (r && r.code === 0) return r;
+  if (r) emitLog(channel, '[nginx] service start failed — starting nginx.exe directly');
   return run(config.nginx.exe, ['-p', config.nginx.prefix, '-c', confPath()], { channel });
 }
 
-function stop(channel = 'system') {
+async function stop(channel = 'system') {
+  const r = await winService('stop', channel);
+  if (r && r.code === 0) return r;
   return run(config.nginx.exe, ['-p', config.nginx.prefix, '-c', confPath(), '-s', 'stop'], { channel });
 }
 
