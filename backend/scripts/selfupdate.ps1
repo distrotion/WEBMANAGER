@@ -146,11 +146,18 @@ function Stop-Manager {
 # takes nginx (every static site) down with it — and Start-Service wm-manager
 # does NOT bring a dependent back. Remember what was running and restart it.
 $script:DependentsWereRunning = @()
+# The panel's own "nginx start" button spawns nginx.exe as a CHILD of the
+# manager (killed with its tree on stop) while the nginx *service* stays
+# Stopped — so "was the service running" is not enough. The nginx service is
+# the intended state (install.ps1 registers it auto-start): if it exists, it is
+# always started after the manager, plus any other dependent that was running.
 function Get-RunningDependents {
   if ($Simulate) { return @() }
+  $list = @()
   $svc = Get-Service wm-manager -ErrorAction SilentlyContinue
-  if (-not $svc) { return @() }
-  return @($svc.DependentServices | Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name })
+  if ($svc) { $list += @($svc.DependentServices | Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name }) }
+  if ((Get-Service nginx -ErrorAction SilentlyContinue) -and ($list -notcontains 'nginx')) { $list += 'nginx' }
+  return $list
 }
 function Start-Dependents {
   $result = @{}
