@@ -585,8 +585,15 @@ def cmd_update():
             break
     global _token
     _token = None  # tokens survive a restart (same JWT secret) but re-login is cheap and certain
-    st, after = api('GET', '/api/system/update/status')
-    state = (after or {}).get('state') or {}
+    # the panel answering is not the verdict: the helper is still in its health
+    # gate (or rolling back) — wait for state.json to leave queued/running
+    state = {}
+    for _ in range(60):
+        st, after = api('GET', '/api/system/update/status')
+        state = (after or {}).get('state') or {}
+        if st == 200 and state.get('status') not in ('queued', 'running'):
+            break
+        time.sleep(3)
     print(f'  result: {state.get("status")}  step {state.get("step")}  error {state.get("error")}')
     if state.get('status') != 'success':
         st, log = api('GET', '/api/system/update/log?lines=40')
