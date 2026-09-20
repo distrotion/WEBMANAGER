@@ -111,7 +111,8 @@ Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
 - **Update (via API, no one at the console):** `POST /api/system/update {ref}` (admin). The panel fetches the checkout
   recorded in `WM_REPO_DIR` (stamped by `update.cmd`, or `PUT /api/system/update/config {repoDir}`), hands the swap to an
   out-of-process helper (`backend/scripts/selfupdate.ps1`, launched as a run-once Scheduled Task so NSSM's stop cannot kill it),
-  which backs up `app\backend` + `app\ui` to `update\releases\`, stops the service, copies, `npm install`, restarts, and
+  which backs up `app\backend` + `app\ui` to `update\releases\`, stops the service, copies, `npm install`, restarts (nginx too —
+  it depends on wm-manager and goes down with it; `state.dependents` says whether it came back), and
   **health-gates**: `/api/health` must answer 200 with the new version within `healthTimeoutSec` (default 90) or it **rolls back**
   to the backup. Progress/verdict: `GET /api/system/update/status` (`queued | running | success | rolled-back | failed | interrupted`),
   `GET /api/system/update/log`. Never touches `.env`, `certs\`, `sites\`, `data\`. From a dev Mac: `scripts/https-pilot.py update [ref]`

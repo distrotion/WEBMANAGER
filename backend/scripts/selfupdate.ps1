@@ -131,6 +131,8 @@ function Stop-Manager {
     Start-Sleep -Milliseconds 300
     return
   }
+  $script:DependentsWereRunning = Get-RunningDependents
+  if ($script:DependentsWereRunning.Count) { Log "dependents running (will restart after): $($script:DependentsWereRunning -join ', ')" }
   Stop-Service wm-manager -Force -ErrorAction SilentlyContinue
   $svc = Get-Service wm-manager -ErrorAction SilentlyContinue
   if (-not $svc) { throw 'service wm-manager not found - refusing to copy over a possibly running manager' }
@@ -138,6 +140,33 @@ function Stop-Manager {
   $svc.Refresh()
   if ($svc.Status -ne 'Stopped') { throw "wm-manager did not stop (status $($svc.Status))" }
   Start-Sleep -Seconds 2   # let node-pty / better-sqlite3 file handles close
+}
+
+# nginx is registered with DependOnService wm-manager, so stopping the manager
+# takes nginx (every static site) down with it — and Start-Service wm-manager
+# does NOT bring a dependent back. Remember what was running and restart it.
+$script:DependentsWereRunning = @()
+function Get-RunningDependents {
+  if ($Simulate) { return @() }
+  $svc = Get-Service wm-manager -ErrorAction SilentlyContinue
+  if (-not $svc) { return @() }
+  return @($svc.DependentServices | Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name })
+}
+function Start-Dependents {
+  $result = @{}
+  foreach ($name in $script:DependentsWereRunning) {
+    try {
+      Start-Service $name -ErrorAction Stop
+      $d = Get-Service $name
+      $d.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+      $result[$name] = 'running'
+      Log "dependent service $name started"
+    } catch {
+      $result[$name] = "FAILED: $($_.Exception.Message)"
+      Log "!! dependent service $name did not start: $($_.Exception.Message) - start it from the panel (nginx -> Start)"
+    }
+  }
+  Set-State @{ dependents = $result }
 }
 
 function Start-Manager {
@@ -239,6 +268,7 @@ function Invoke-Rollback([string]$why) {
     if (Test-Path $envBak) { Copy-Item -Force $envBak "$EnvFile.tmp"; Move-Item -Force "$EnvFile.tmp" $EnvFile } else { Write-EnvValue 'WM_VERSION' $oldVersion }
     Step 'rollback: start'
     Start-Manager
+    Start-Dependents
     $expect = if ($oldShort -eq 'unknown') { '' } else { $oldShort }
     $h = Wait-Healthy $expect $HealthTimeoutSec $ShortTarget
     Set-State @{
@@ -303,6 +333,7 @@ try {
 
   Step 'start manager'
   Start-Manager
+  Start-Dependents
 
   Step 'health gate'
   $h = Wait-Healthy $ShortTarget $HealthTimeoutSec
