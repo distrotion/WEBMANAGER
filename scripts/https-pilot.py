@@ -158,8 +158,21 @@ def cmd_health():
     print(f'ftp           : {json.dumps(ftp)}')
     st, gws = api('GET', '/api/gateways')
     if st == 200 and isinstance(gws, list):
-        down = [g.get('name') for g in gws if g.get('enabled') and not g.get('running', True)]
-        print(f'gateways      : {len(gws)} rows, enabled-but-down: {down or "none"}')
+        host = urllib.parse.urlsplit(WM_URL).hostname
+        down = []
+        for g in gws:
+            if not g.get('enabled'):
+                continue
+            with socket.socket() as sk:
+                sk.settimeout(3)
+                try:
+                    sk.connect((host, g['listen_port']))
+                except OSError:
+                    down.append(f"{g.get('name')}:{g['listen_port']}")
+        enabled = sum(1 for g in gws if g.get('enabled'))
+        print(f'gateways      : {enabled} enabled, TCP-connect failed: {down or "none"}')
+        if down:
+            die('gateway listener(s) down after restart')
     else:
         print(f'gateways      : {st} {gws}')
     if not ok:
