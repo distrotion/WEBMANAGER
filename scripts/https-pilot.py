@@ -10,7 +10,7 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   backup <label>  download conf.d/ports + conf.d/front over that FTP user
   routes          create the /api and /auth proxy routes (skips ones that exist)           [mutating]
   verify-routes   same paths through the site port must match baseline; SSE stream check
-  build-defines   rewrite superapp global.dart base URLs to relative paths (--revert)
+  (build)         sh SOI8MASTER/buildup-superapp.sh soi8-superapp-app — swaps global.dart to /api/* itself
   verify-build    served main.dart.js must contain 0 absolute backend URLs
   https           enable the second https listener                                        [mutating]
   verify-https    https 200, http still 200, cert SAN carries the server IP
@@ -72,8 +72,7 @@ ROUTES = [
 BACKEND_PATHS = [(r['path_prefix'], r['target_url'], 'GET', '/') for r in ROUTES]
 SSE_PATH = None
 
-GLOBAL_DART = Path(__file__).resolve().parents[2] / 'SOI8MASTER' / 'soi8-superapp-app' / 'lib' / 'data' / 'global.dart'
-# global.dart const -> relative path (prefix must match ROUTES; trailing / kept)
+# global.dart const -> relative path as buildup-superapp.sh swaps them (verify-build greps both sides)
 RELATIVE_BASES = {
     'serverGB': ('http://172.23.10.34:18000/', '/api/gb/'),
     'serverQC': ('http://172.23.10.34:15000/', '/api/qc/'),
@@ -334,37 +333,6 @@ def cmd_verify_routes():
     print('all paths match baseline')
 
 
-def cmd_build_defines():
-    # superapp has no dart-define: rewrite the 8 base-URL consts in global.dart
-    # to relative paths (or back with --revert). Same build then works on
-    # http:SITE_PORT and https:HTTPS_PORT because nginx serves both listeners.
-    if not GLOBAL_DART.exists():
-        die(f'{GLOBAL_DART} not found')
-    text = GLOBAL_DART.read_text()
-    revert = '--revert' in sys.argv
-    changed = 0
-    for var, (absolute, relative) in RELATIVE_BASES.items():
-        src, dst = (relative, absolute) if revert else (absolute, relative)
-        line_re = re.compile(rf"^String {var} = '([^']*)';", re.M)
-        m = line_re.search(text)
-        if not m:
-            die(f'{var} not found as a top-level String in global.dart')
-        if m.group(1) == dst:
-            continue
-        if m.group(1) != src:
-            die(f'{var} has unexpected value {m.group(1)!r} — edit by hand')
-        text = text.replace(m.group(0), f"String {var} = '{dst}';", 1)
-        changed += 1
-        print(f'  {var}: {src} -> {dst}')
-    if not changed:
-        print('  global.dart already in the requested state')
-        return
-    if DRY:
-        return
-    GLOBAL_DART.write_text(text)
-    print(f'  written {GLOBAL_DART} ({changed} consts) — now run buildup-superapp.sh')
-
-
 def cmd_verify_build():
     st, _, raw = http('GET', f'http://{SERVER_IP}:{SITE_PORT}/main.dart.js', timeout=60)
     if st != 200:
@@ -536,7 +504,7 @@ def cmd_ftp_close():
 COMMANDS = {
     'health': cmd_health, 'status': cmd_status, 'baseline': cmd_baseline,
     'ftp-open': cmd_ftp_open, 'backup': cmd_backup, 'routes': cmd_routes, 'verify-routes': cmd_verify_routes,
-    'build-defines': cmd_build_defines, 'verify-build': cmd_verify_build,
+    'verify-build': cmd_verify_build,
     'https': cmd_https, 'verify-https': cmd_verify_https, 'diff': cmd_diff, 'ftp-close': cmd_ftp_close,
     'sites-smoke': cmd_sites_smoke, 'ca': cmd_ca,
 }
