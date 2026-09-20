@@ -116,7 +116,8 @@ Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
   **health-gates**: `/api/health` must answer 200 with the new version within `healthTimeoutSec` (default 90) or it **rolls back**
   to the backup. Progress/verdict: `GET /api/system/update/status` (`queued | running | success | rolled-back | failed | interrupted`),
   `GET /api/system/update/log`. Never touches `.env`, `certs\`, `sites\`, `data\`. From a dev Mac: `scripts/https-pilot.py update [ref]`
-  then `sites-smoke check`. A machine needs one last manual `update.cmd` to receive this feature.
+  then `sites-smoke check`. A machine needs one last manual `update.cmd` to receive this feature. Note: the helper that runs is the one shipped with
+  the *currently running* version, so a fix to `selfupdate.ps1` takes effect on the update *after* the one that installs it.
 
 ### Start / stop / uninstall
 ```powershell

@@ -170,5 +170,8 @@ audit   { who, action, target, time }
     → stop → robocopy → npm → stamp → start → health gate (200 + version ใหม่) → ไม่ผ่าน = rollback อัตโนมัติ · สถานะใน `update\state.json`
     (`GET /api/system/update/status`) · lock = state + pid ของ helper (ตายกลางคัน >30 นาที = ปลดล็อก + รายงาน `interrupted`) · test `selfupdate.test.js`
     รัน helper จริงบน pwsh (-Simulate) ทั้งเคสสำเร็จและ rollback · เครื่องต้องอัปเดตด้วยมือครั้งสุดท้าย 1 ครั้งเพื่อรับ `WM_REPO_DIR`
+    · **พิสูจน์แล้ว 2026-09-20** บน .32/.40/.168 จาก Mac โดยไม่มีคนหน้าเครื่อง: rollback (branch `test/selfupdate-broken`) กลับเวอร์ชันเดิมใน 18-95 วิ · success + `sites-smoke check` ผ่าน
+    · gotcha: helper ที่รันคือของ**เวอร์ชันที่กำลังรัน** (stage จาก `app/backend/scripts`) — แก้ helper แล้วมีผลรอบ**ถัดไป** · nginx `DependOnService wm-manager` ดับตามและไม่ขึ้นเอง → helper ตั้งแต่ `5728a73` restart ให้
+    · .34 ยัง `repoDir: null` (รอบมือใช้ update.ps1 เก่า) → ตั้งผ่าน `PUT /api/system/update/config` ก่อนใช้
   - 2.2 Fleet (รอเจ้าของตัดสิน #439) · 2.3 read-only files/nginx check/services API · 2.4 named commands · 2.5 .168
 ```
