@@ -120,6 +120,9 @@ class _ProxyRoutesPageState extends State<ProxyRoutesPage> {
         title: Text('${r['path_prefix']}', style: const TextStyle(fontWeight: FontWeight.w600, fontFamily: 'monospace')),
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('-> ${r['target_url']}', style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.white70)),
+          if ((r['rewrite_from'] ?? '').toString().isNotEmpty)
+            Text('https rewrite: ${r['rewrite_from']} -> ${r['path_prefix']}/',
+                style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.amberAccent)),
           Text(
             '${strip ? 'ตัด prefix ก่อนส่ง' : 'ส่ง path เดิมทั้งหมด'}${sse ? ' · SSE (buffering off)' : ''}',
             style: const TextStyle(fontSize: 11, color: Colors.white38),
@@ -146,6 +149,7 @@ class _RouteDialog extends StatefulWidget {
 class _RouteDialogState extends State<_RouteDialog> {
   late final TextEditingController _prefix;
   late final TextEditingController _target;
+  late final TextEditingController _rewriteFrom;
   bool _strip = true;
   bool _sse = false;
   bool _enabled = true;
@@ -159,6 +163,7 @@ class _RouteDialogState extends State<_RouteDialog> {
     super.initState();
     _prefix = TextEditingController(text: widget.route?['path_prefix']?.toString() ?? '');
     _target = TextEditingController(text: widget.route?['target_url']?.toString() ?? '');
+    _rewriteFrom = TextEditingController(text: widget.route?['rewrite_from']?.toString() ?? '');
     _strip = widget.route?['strip_prefix'] != false;
     _sse = widget.route?['sse'] == true;
     _enabled = widget.route?['enabled'] != false;
@@ -168,6 +173,7 @@ class _RouteDialogState extends State<_RouteDialog> {
   void dispose() {
     _prefix.dispose();
     _target.dispose();
+    _rewriteFrom.dispose();
     super.dispose();
   }
 
@@ -182,6 +188,7 @@ class _RouteDialogState extends State<_RouteDialog> {
       'strip_prefix': _strip,
       'sse': _sse,
       'enabled': _enabled,
+      'rewrite_from': _rewriteFrom.text.trim(),
     };
     try {
       if (_isEdit) {
@@ -216,6 +223,16 @@ class _RouteDialogState extends State<_RouteDialog> {
                 labelText: 'target_url',
                 hintText: 'http://172.23.10.34:15000',
                 helperText: 'host:port อะไรก็ได้ ไม่จำกัด 127.0.0.1',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _rewriteFrom,
+              decoration: const InputDecoration(
+                labelText: 'rewrite_from (เฉพาะฝั่ง https)',
+                hintText: 'http://172.23.10.34:18000/',
+                helperText: 'URL เต็มที่ฝังใน bundle → ฝั่ง https แทนด้วย <prefix>/ ตอนเสิร์ฟ (sub_filter) · http เดิมไม่แตะ · เว้นว่าง = ไม่ทำ',
+                helperMaxLines: 3,
               ),
             ),
             const SizedBox(height: 6),

@@ -176,6 +176,23 @@ function routeTarget(v) {
   return null;
 }
 
+// rewrite_from is interpolated into `sub_filter '<from>' '<prefix>/';` on the
+// site's https block only. Optional (NULL/'' = no rewrite). Must be a bare
+// origin with trailing slash so the replacement `<path_prefix>/` keeps the
+// rest of every URL intact; quotes, $ (nginx variable), ; { } and whitespace
+// are excluded because the value sits inside a single-quoted nginx string.
+function routeRewriteFrom(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/[\r\n;{}\0\s'"$\\]/.test(s)) return 'rewrite_from may not contain whitespace, quotes, $, ; { or }';
+  if (!/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?\/$/.test(s)) {
+    return 'rewrite_from must be http(s)://host[:port]/ (origin with trailing slash, no path)';
+  }
+  if (s.length > 200) return 'rewrite_from too long';
+  return null;
+}
+
 module.exports = {
   adminOnly,
   siteName,
@@ -190,4 +207,5 @@ module.exports = {
   siteFields,
   routePrefix,
   routeTarget,
+  routeRewriteFrom,
 };

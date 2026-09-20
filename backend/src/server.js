@@ -44,6 +44,9 @@ function startSubsystem(name, fn) {
   }
 }
 
+// Self-update: if the helper restarted us mid-update, close its state out.
+startSubsystem('selfupdate', () => require('./selfupdate').reconcileOnBoot());
+
 // CI/CD: poll git remotes and auto-deploy sites that have autodeploy enabled.
 startSubsystem('autodeploy', () => require('./autodeploy').start());
 

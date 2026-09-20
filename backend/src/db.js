@@ -329,6 +329,15 @@ const MIGRATIONS = {
   gateways: [
     ['ftp_mode', 'INTEGER NOT NULL DEFAULT 0'],
   ],
+  proxy_routes: [
+    // Absolute base URL (http(s)://host[:port]/) that the site's HTTPS
+    // listener rewrites to `<path_prefix>/` inside served JS/HTML via
+    // nginx sub_filter — so a bundle built with absolute backend URLs can
+    // run behind the https gate without a rebuild. NULL = no rewrite. Only
+    // the https server block carries the sub_filter; the http block is
+    // byte-identical to before. See nginx.js rewriteFilters().
+    ['rewrite_from', 'TEXT'],
+  ],
   mq_queues: [
     // Push mode, added after the queue tables first shipped.
     ['forward_url', 'TEXT'],

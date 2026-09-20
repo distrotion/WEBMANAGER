@@ -150,6 +150,56 @@ function addRoute(site, fields) {
   const untouched2 = fs.readFileSync(bareFile, 'utf8');
   eq('render ซ้ำได้ผลลัพธ์เดิมทุกไบต์', untouched2, untouched1);
 
+  section('guard: rewrite_from (sub_filter source) validation');
+  ok('ว่าง/null = ไม่ rewrite ผ่าน', guard.routeRewriteFrom('') === null && guard.routeRewriteFrom(null) === null && guard.routeRewriteFrom(undefined) === null);
+  ok('origin + / ท้ายผ่าน', guard.routeRewriteFrom('http://172.23.10.34:18000/') === null);
+  ok('ไม่มี / ท้ายไม่ผ่าน (replacement ต้องคง path ที่เหลือไว้)', guard.routeRewriteFrom('http://172.23.10.34:18000') !== null);
+  ok('มี path ต่อท้ายไม่ผ่าน', guard.routeRewriteFrom('http://172.23.10.34:18000/api/') !== null);
+  ok("มี ' ไม่ผ่าน (หลุดจาก quoted string ของ nginx)", guard.routeRewriteFrom("http://x:1/'") !== null);
+  ok('มี $ ไม่ผ่าน (nginx variable)', guard.routeRewriteFrom('http://x$host/') !== null);
+  ok('มี newline ไม่ผ่าน', guard.routeRewriteFrom('http://x:1/\nevil') !== null);
+  ok('ไม่ใช่ http(s) ไม่ผ่าน', guard.routeRewriteFrom('ws://x:1/') !== null);
+
+  section('rewrite_from: sub_filter เฉพาะ https block — http block ต้องไม่โดน');
+  const rwSite = makeSite({ direct_port: 19002 });
+  tls.issueCert(rwSite.name, ['172.23.10.34', '127.0.0.1']);
+  addRoute(rwSite, { path_prefix: '/api/gb', target_url: 'http://172.23.10.34:18000', strip_prefix: 1 });
+  addRoute(rwSite, { path_prefix: '/api/gwplc', target_url: 'http://172.23.10.34:2520', strip_prefix: 1, sse: 1 });
+  db.prepare('UPDATE sites SET https_port=19444, https_enabled=1 WHERE id=?').run(rwSite.id);
+  const rwFile = path.join(config.paths.nginxPorts, `${rwSite.name}.conf`);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(rwSite.id));
+  const noRewriteConf = fs.readFileSync(rwFile, 'utf8');
+  ok('ยังไม่มี rewrite_from -> ไม่มี sub_filter เลย (opt-in)', !noRewriteConf.includes('sub_filter'));
+  // switch rewrites on for both routes
+  db.prepare("UPDATE proxy_routes SET rewrite_from='http://172.23.10.34:18000/' WHERE site_id=? AND path_prefix='/api/gb'").run(rwSite.id);
+  db.prepare("UPDATE proxy_routes SET rewrite_from='http://172.23.10.34:2520/' WHERE site_id=? AND path_prefix='/api/gwplc'").run(rwSite.id);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(rwSite.id));
+  const rwConf = fs.readFileSync(rwFile, 'utf8');
+  const httpsStart = rwConf.indexOf('# layer1 direct-port TLS for');
+  ok('มี https block', httpsStart > 0);
+  const httpPart = rwConf.slice(0, httpsStart);
+  const httpsPart = rwConf.slice(httpsStart);
+  eq('http block เหมือนตอนไม่มี rewrite ทุกไบต์', httpPart, noRewriteConf.slice(0, noRewriteConf.indexOf('# layer1 direct-port TLS for')));
+  ok('http block ไม่มี sub_filter', !httpPart.includes('sub_filter'));
+  ok("https block มี sub_filter '…:18000/' '/api/gb/'", httpsPart.includes("sub_filter 'http://172.23.10.34:18000/' '/api/gb/';"));
+  ok("https block มี sub_filter '…:2520/' '/api/gwplc/'", httpsPart.includes("sub_filter 'http://172.23.10.34:2520/' '/api/gwplc/';"));
+  ok('sub_filter_types application/javascript', httpsPart.includes('sub_filter_types application/javascript;'));
+  ok('sub_filter_once off (URL ปรากฏหลายครั้งใน bundle)', httpsPart.includes('sub_filter_once off;'));
+  ok('sub_filter_last_modified off (ตัด ETag/Last-Modified กัน 304 ผิด)', httpsPart.includes('sub_filter_last_modified off;'));
+  const locRoot = httpsPart.indexOf('location / {');
+  const firstProxy = httpsPart.indexOf('location /api/gb/');
+  const subIdx = httpsPart.indexOf('sub_filter_types');
+  ok('sub_filter อยู่ใน location / (static) ไม่ใช่ใน route ที่ proxy', subIdx > locRoot && locRoot > firstProxy);
+  ok('route location ใน https block ไม่มี sub_filter', !httpsPart.slice(firstProxy, locRoot).includes('sub_filter'));
+  ok('https block ยังมี try_files ของ static', httpsPart.includes('try_files $uri $uri/ /index.html;'));
+  ok('ไม่มี gzip_static ที่ไหนเลย (จะข้าม sub_filter)', !rwConf.includes('gzip_static') && !mainConfText.includes('gzip_static'));
+  const tRw = await nginx.test('silent');
+  eq('nginx -t ผ่านจริงกับ sub_filter (binary มี http_sub_module)', tRw.code, 0);
+  // rewrite off again -> byte-identical to the no-rewrite render
+  db.prepare("UPDATE proxy_routes SET rewrite_from=NULL WHERE site_id=?").run(rwSite.id);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(rwSite.id));
+  eq('เอา rewrite ออก -> ไฟล์กลับมาเหมือนก่อนใส่ทุกไบต์', fs.readFileSync(rwFile, 'utf8'), noRewriteConf);
+
   done();
 })().catch((e) => {
   console.error(e);

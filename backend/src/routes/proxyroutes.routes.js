@@ -42,6 +42,7 @@ function validate(b) {
   return (
     guard.routePrefix(b.path_prefix) ||
     guard.routeTarget(b.target_url) ||
+    guard.routeRewriteFrom(b.rewrite_from) ||
     null
   );
 }
@@ -71,8 +72,8 @@ router.post('/:id/routes', guard.adminOnly, async (req, res) => {
   try {
     info = db
       .prepare(
-        `INSERT INTO proxy_routes (site_id, path_prefix, target_url, strip_prefix, sse, enabled)
-         VALUES (@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled)`
+        `INSERT INTO proxy_routes (site_id, path_prefix, target_url, strip_prefix, sse, enabled, rewrite_from)
+         VALUES (@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled,@rewrite_from)`
       )
       .run({
         site_id: s.id,
@@ -81,6 +82,7 @@ router.post('/:id/routes', guard.adminOnly, async (req, res) => {
         strip_prefix: b.strip_prefix === false ? 0 : 1,
         sse: b.sse ? 1 : 0,
         enabled: b.enabled === false ? 0 : 1,
+        rewrite_from: rewriteValue(b.rewrite_from),
       });
   } catch (e) {
     return res.status(400).json({ error: /UNIQUE/.test(e.message) ? 'path_prefix already used on this site' : e.message });
@@ -91,11 +93,18 @@ router.post('/:id/routes', guard.adminOnly, async (req, res) => {
     db.prepare('DELETE FROM proxy_routes WHERE id=?').run(info.lastInsertRowid);
     return res.status(400).json({ error: `nginx -t failed, route not saved: ${r.error}` });
   }
-  audit(req.user, 'route-create', s.name, `${b.path_prefix} -> ${b.target_url}`);
+  audit(req.user, 'route-create', s.name, `${b.path_prefix} -> ${b.target_url}${b.rewrite_from ? ` (rewrite ${b.rewrite_from})` : ''}`);
   res.status(201).json(getRoute(info.lastInsertRowid));
 });
 
-const UPDATABLE = ['path_prefix', 'target_url', 'strip_prefix', 'sse', 'enabled'];
+const UPDATABLE = ['path_prefix', 'target_url', 'strip_prefix', 'sse', 'enabled', 'rewrite_from'];
+
+// '' / null / undefined all mean "no rewrite" and are stored as NULL, so the
+// conf renderer has one falsy value to test, not three.
+function rewriteValue(v) {
+  const s = v === undefined || v === null ? '' : String(v).trim();
+  return s || null;
+}
 
 router.put('/:id/routes/:routeId', guard.adminOnly, async (req, res) => {
   const s = requireProxyableSite(req, res);
@@ -103,7 +112,11 @@ router.put('/:id/routes/:routeId', guard.adminOnly, async (req, res) => {
   const row = getRoute(req.params.routeId);
   if (!row || row.site_id !== s.id) return res.status(404).json({ error: 'route not found' });
   const b = req.body || {};
-  const merged = { path_prefix: b.path_prefix ?? row.path_prefix, target_url: b.target_url ?? row.target_url };
+  const merged = {
+    path_prefix: b.path_prefix ?? row.path_prefix,
+    target_url: b.target_url ?? row.target_url,
+    rewrite_from: 'rewrite_from' in b ? b.rewrite_from : row.rewrite_from,
+  };
   const bad = validate(merged);
   if (bad) return res.status(400).json({ error: bad });
 
@@ -113,7 +126,7 @@ router.put('/:id/routes/:routeId', guard.adminOnly, async (req, res) => {
   for (const k of UPDATABLE) {
     if (k in b) {
       sets.push(`${k}=@${k}`);
-      vals[k] = typeof b[k] === 'boolean' ? (b[k] ? 1 : 0) : b[k];
+      vals[k] = k === 'rewrite_from' ? rewriteValue(b[k]) : typeof b[k] === 'boolean' ? (b[k] ? 1 : 0) : b[k];
     }
   }
   if (sets.length) {
@@ -128,7 +141,7 @@ router.put('/:id/routes/:routeId', guard.adminOnly, async (req, res) => {
   if (!r.ok) {
     // undo the DB change too, so the row and the (restored) conf agree
     db.prepare(
-      'UPDATE proxy_routes SET path_prefix=@path_prefix, target_url=@target_url, strip_prefix=@strip_prefix, sse=@sse, enabled=@enabled WHERE id=@id'
+      'UPDATE proxy_routes SET path_prefix=@path_prefix, target_url=@target_url, strip_prefix=@strip_prefix, sse=@sse, enabled=@enabled, rewrite_from=@rewrite_from WHERE id=@id'
     ).run(before);
     return res.status(400).json({ error: `nginx -t failed, route not updated: ${r.error}` });
   }
@@ -148,8 +161,8 @@ router.delete('/:id/routes/:routeId', guard.adminOnly, async (req, res) => {
     // restore the row — the conf itself is already back to the pre-delete
     // state via nginx.applyConfig's restore, so the DB must match it
     db.prepare(
-      `INSERT INTO proxy_routes (id, site_id, path_prefix, target_url, strip_prefix, sse, enabled, created_at)
-       VALUES (@id,@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled,@created_at)`
+      `INSERT INTO proxy_routes (id, site_id, path_prefix, target_url, strip_prefix, sse, enabled, created_at, rewrite_from)
+       VALUES (@id,@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled,@created_at,@rewrite_from)`
     ).run(row);
     emitLog(channel, `[route] ลบไม่สำเร็จ (nginx -t ล้ม): ${r.error}`);
     return res.status(400).json({ error: `nginx -t failed, route not deleted: ${r.error}` });

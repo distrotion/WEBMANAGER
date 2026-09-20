@@ -8,10 +8,10 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   baseline        hit every backend path directly, save status codes
   ftp-open        temp FTP user rooted at nginx\\conf.d (owner-approved, read use only)   [mutating]
   backup <label>  download conf.d/ports + conf.d/front over that FTP user
-  routes          create the /api and /auth proxy routes (skips ones that exist)           [mutating]
+  routes          create the 8 proxy routes with rewrite_from (adds rewrite_from to existing ones)   [mutating]
   verify-routes   same paths through the site port must match baseline; SSE stream check
-  (build)         sh SOI8MASTER/buildup-superapp.sh soi8-superapp-app — swaps global.dart to /api/* itself
-  verify-build    served main.dart.js must contain 0 absolute backend URLs
+  verify-build    https main.dart.js (via panel CA) = 0 absolute / 8 relative URLs;
+                  http main.dart.js = untouched (8 absolute, byte-identical to DEPLOY_DIR/main.dart.js)
   https           enable the second https listener                                        [mutating]
   verify-https    https 200, http still 200, cert SAN carries the server IP
   diff <a> <b>    compare two backups; any change outside this site's conf is flagged
@@ -21,8 +21,11 @@ Run from the dev machine, one subcommand per runbook step, in this order:
 
 Mutating steps accept --dry-run (print the request, send nothing). Config via env:
   WM_URL (default http://172.23.10.34:8088)  WM_USER (admin)  WM_PASS (prompted if unset)
-  SITE_NAME (superapp)  SITE_PORT (7000)  HTTPS_PORT (7002)  SERVER_IP (172.23.10.34)
+  SITE_NAME (superapp)  SITE_PORT (7000)  HTTPS_PORT (7002)  SERVER_IP (172.23.10.34 — host serving the site)
+  BACKEND_IP (172.23.10.34 — where the 8 backends live; keep it on .34 when rehearsing the site on .32)
   WM_ROOT_WIN (C:\\webmanager)  — install root on the Windows host, for the FTP root_path
+  DEPLOY_DIR  — local checkout of the site's deploy repo, for the http byte-compare in verify-build
+                (default ~/TPK/QC/ALL-REFRESH-NEW/SOI8MASTER/DEPLOY/soi8-superapp-app-deploy)
 """
 import getpass
 import io
@@ -45,6 +48,8 @@ SITE_NAME = os.environ.get('SITE_NAME', 'superapp')
 SITE_PORT = int(os.environ.get('SITE_PORT', '7000'))
 HTTPS_PORT = int(os.environ.get('HTTPS_PORT', '7002'))
 SERVER_IP = os.environ.get('SERVER_IP', '172.23.10.34')
+# where the 8 superapp backends live — stays .34 even when the SITE is rehearsed on .32
+BACKEND_IP = os.environ.get('BACKEND_IP', '172.23.10.34')
 WM_ROOT_WIN = os.environ.get('WM_ROOT_WIN', r'C:\webmanager')
 SITE_ID = None  # resolved from SITE_NAME on first use — never trust a fixed id across hosts
 UNIT = os.environ.get('UNIT', 'superapp')
@@ -55,24 +60,29 @@ BASELINE_FILE = STATE_DIR / 'baseline.json'
 FTP_FILE = STATE_DIR / 'ftp.json'
 BACKUP_DIR = STATE_DIR / 'backups'
 
+DEPLOY_DIR = Path(os.environ.get('DEPLOY_DIR', str(Path.home() / 'TPK/QC/ALL-REFRESH-NEW/SOI8MASTER/DEPLOY/soi8-superapp-app-deploy')))
+
 # superapp global.dart:74-95 → one route per base URL. strip_prefix so the
 # backend sees the same paths it sees today; sse on gwplc (stream + ws upgrade).
+# rewrite_from = the absolute origin baked into main.dart.js; the site's HTTPS
+# block sub_filters it to '<path_prefix>/' when serving, so the SAME deployed
+# bundle runs untouched on http :7000 and through the gate on https :7002.
 ROUTES = [
-    {'path_prefix': '/api/gb', 'target_url': f'http://{SERVER_IP}:18000', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/qc', 'target_url': f'http://{SERVER_IP}:15000', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/inv', 'target_url': f'http://{SERVER_IP}:18010', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/sap', 'target_url': 'http://172.23.10.168:14094', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/sapbuf', 'target_url': 'http://172.23.10.168:14090', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/status', 'target_url': f'http://{SERVER_IP}:18020', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/ocr', 'target_url': f'http://{SERVER_IP}:18030', 'strip_prefix': True, 'sse': False, 'enabled': True},
-    {'path_prefix': '/api/gwplc', 'target_url': f'http://{SERVER_IP}:2520', 'strip_prefix': True, 'sse': True, 'enabled': True},
+    {'path_prefix': '/api/gb', 'target_url': f'http://{BACKEND_IP}:18000', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:18000/'},
+    {'path_prefix': '/api/qc', 'target_url': f'http://{BACKEND_IP}:15000', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:15000/'},
+    {'path_prefix': '/api/inv', 'target_url': f'http://{BACKEND_IP}:18010', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:18010/'},
+    {'path_prefix': '/api/sap', 'target_url': 'http://172.23.10.168:14094', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': 'http://172.23.10.168:14094/'},
+    {'path_prefix': '/api/sapbuf', 'target_url': 'http://172.23.10.168:14090', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': 'http://172.23.10.168:14090/'},
+    {'path_prefix': '/api/status', 'target_url': f'http://{BACKEND_IP}:18020', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:18020/'},
+    {'path_prefix': '/api/ocr', 'target_url': f'http://{BACKEND_IP}:18030', 'strip_prefix': True, 'sse': False, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:18030/'},
+    {'path_prefix': '/api/gwplc', 'target_url': f'http://{BACKEND_IP}:2520', 'strip_prefix': True, 'sse': True, 'enabled': True, 'rewrite_from': f'http://{BACKEND_IP}:2520/'},
 ]
 # baseline/verify probe the ROOT of every route target (GET /) — generic, so
 # whatever each backend answers there (200/404/…) must be identical via the site
 BACKEND_PATHS = [(r['path_prefix'], r['target_url'], 'GET', '/') for r in ROUTES]
 SSE_PATH = None
 
-# global.dart const -> relative path as buildup-superapp.sh swaps them (verify-build greps both sides)
+# global.dart const -> relative path as the https gate rewrites them (verify-build greps both sides)
 RELATIVE_BASES = {
     'serverGB': ('http://172.23.10.34:18000/', '/api/gb/'),
     'serverQC': ('http://172.23.10.34:15000/', '/api/qc/'),
@@ -303,14 +313,23 @@ def cmd_backup():
 
 def cmd_routes():
     st, existing = api('GET', f'/api/sites/{site_id()}/routes')
-    have = {r['path_prefix'] for r in (existing or [])} if st == 200 else set()
+    have = {r['path_prefix']: r for r in (existing or [])} if st == 200 else {}
     for r in ROUTES:
-        if r['path_prefix'] in have:
-            print(f'  {r["path_prefix"]} already exists — skip')
+        cur = have.get(r['path_prefix'])
+        if cur:
+            if cur.get('rewrite_from') == r['rewrite_from']:
+                print(f'  {r["path_prefix"]} already exists with rewrite_from — skip')
+                continue
+            # route created by an older panel (no rewrite column yet) — add just that field
+            st, res = mutate('PUT', f'/api/sites/{site_id()}/routes/{cur["id"]}', {'rewrite_from': r['rewrite_from']})
+            if not DRY and st != 200:
+                die(f'route {r["path_prefix"]} rewrite_from update failed ({st}): {res} — panel too old (needs rewrite_from) or nginx -t rejected it')
             continue
         st, res = mutate('POST', f'/api/sites/{site_id()}/routes', r)
         if not DRY and st != 201:
             die(f'route {r["path_prefix"]} failed ({st}): {res} — nginx -t rejected it, nothing was reloaded')
+        if not DRY and res and res.get('rewrite_from') != r['rewrite_from']:
+            die(f'route {r["path_prefix"]} saved WITHOUT rewrite_from — panel on {WM_URL} predates the sub_filter gate, update it first')
 
 
 def cmd_verify_routes():
@@ -333,18 +352,48 @@ def cmd_verify_routes():
     print('all paths match baseline')
 
 
+def panel_ca_context():
+    import ssl
+    st, _, ca_pem = http('GET', f'{WM_URL}/panel-ca.crt')
+    if st != 200:
+        die(f'CA not downloadable from {WM_URL}/panel-ca.crt ({st})')
+    return ssl.create_default_context(cadata=ca_pem.decode())
+
+
 def cmd_verify_build():
+    # https side: the gate must have rewritten every absolute origin to its route
+    ctx = panel_ca_context()
+    try:
+        with urllib.request.urlopen(f'https://{SERVER_IP}:{HTTPS_PORT}/main.dart.js', context=ctx, timeout=60) as r:
+            https_js = r.read().decode(errors='replace')
+            enc = r.headers.get('Content-Encoding', '')
+    except Exception as e:
+        die(f'https :{HTTPS_PORT}/main.dart.js unreachable: {e} — run https first, CA installed?')
+    leftovers = {a: https_js.count(a) for a, _ in RELATIVE_BASES.values()}
+    relative = {r: r in https_js for _, r in RELATIVE_BASES.values()}
+    print(f'  https absolute leftovers: { {k: v for k, v in leftovers.items() if v} or "none"}')
+    print(f'  https relative present:   {sum(relative.values())}/{len(relative)}   size {len(https_js)//1024} KB  encoding {enc or "identity"}')
+    if any(leftovers.values()) or not all(relative.values()):
+        die('https bundle still carries absolute backend URLs — routes missing rewrite_from, or panel predates the sub_filter gate')
+    # http side: must be the deployed bundle byte-for-byte — absolute URLs intact, no rewrite
     st, _, raw = http('GET', f'http://{SERVER_IP}:{SITE_PORT}/main.dart.js', timeout=60)
     if st != 200:
-        die(f'main.dart.js -> {st}')
-    js = raw.decode(errors='replace')
-    leftovers = {a: js.count(a) for a, _ in RELATIVE_BASES.values()}
-    relative = {r: r in js for _, r in RELATIVE_BASES.values()}
-    print(f'  absolute leftovers: { {k: v for k, v in leftovers.items() if v} or "none"}')
-    print(f'  relative present:   {sum(relative.values())}/{len(relative)}   size {len(raw)//1024} KB')
-    if any(leftovers.values()) or not all(relative.values()):
-        die('served build still carries absolute backend URLs — buildup with the relative global.dart first')
-    print('served build is relative-path only')
+        die(f'http main.dart.js -> {st}')
+    http_js = raw.decode(errors='replace')
+    absolute = {a: a in http_js for a, _ in RELATIVE_BASES.values()}
+    rel_leak = {r: http_js.count(r) for _, r in RELATIVE_BASES.values()}
+    print(f'  http absolute present:    {sum(absolute.values())}/{len(absolute)}   relative leaked: { {k: v for k, v in rel_leak.items() if v} or "none"}')
+    if not all(absolute.values()) or any(rel_leak.values()):
+        die('http bundle was rewritten — sub_filter leaked into the http block; this must never happen')
+    local = DEPLOY_DIR / 'main.dart.js'
+    if local.exists():
+        same = local.read_bytes() == raw
+        print(f'  http bytes == {local}: {"YES" if same else "NO"}')
+        if not same:
+            die('http main.dart.js differs from the local deploy repo — different commit deployed, or the http block was touched')
+    else:
+        print(f'  (no local deploy checkout at {local} — byte-compare skipped; set DEPLOY_DIR)')
+    print('gate ok: https bundle rewritten to routes, http bundle untouched')
 
 
 def cmd_https():

@@ -146,10 +146,13 @@ function cleanPath(p, fallback) {
 // One location block per enabled proxy_routes row for this site — see #436:
 // rendered into the SAME file writePortConf() writes (never into front/,
 // which rebuildFront() wipes on every unrelated site's edit).
-function routeLocations(siteId) {
-  const rows = db
+function enabledRoutes(siteId) {
+  return db
     .prepare('SELECT * FROM proxy_routes WHERE site_id=? AND enabled=1 ORDER BY path_prefix')
     .all(siteId);
+}
+
+function routeLocations(rows) {
   return rows.map((r) => {
     const prefix = cleanPath(r.path_prefix, '');
     const target = r.target_url.replace(/\/+$/, '');
@@ -164,6 +167,37 @@ function routeLocations(siteId) {
   });
 }
 
+// sub_filter lines for the HTTPS block's static `location /` only — one per
+// enabled route that carries rewrite_from. Rewrites the absolute backend
+// origin baked into a Flutter bundle (main.dart.js) to the route's relative
+// prefix, so the SAME bundle serves http :7000 untouched (absolute URLs, no
+// gate) and https :7002 through the gate (same-origin, no mixed content).
+// Notes that matter for correctness:
+//   - sub_filter runs before the gzip filter, so `gzip on` at http level is
+//     fine; what must NOT exist is gzip_static / pre-compressed files, which
+//     bypass sub_filter — mainConf() never enables gzip_static.
+//   - sub_filter_last_modified off (nginx default, stated explicitly): nginx
+//     drops Last-Modified AND ETag on rewritten responses, so a client never
+//     gets a 304 for a body that differs from the original file.
+//   - Only the static location gets it, never the proxied route locations —
+//     a backend's JS/HTML response must pass through unmodified.
+//   - Flutter's service worker keys its cache by origin and compares its
+//     own manifest hashes (old vs new), not the fetched bytes, so a rewritten
+//     main.dart.js is cached as-is on https and never mixed with :7000's.
+function rewriteFilters(rows) {
+  const lines = [];
+  for (const r of rows) {
+    if (!r.rewrite_from) continue;
+    const prefix = cleanPath(r.path_prefix, '');
+    lines.push(`        sub_filter '${r.rewrite_from}' '${prefix}/';`);
+  }
+  if (!lines.length) return '';
+  return `        sub_filter_types application/javascript;
+        sub_filter_once off;
+        sub_filter_last_modified off;
+${lines.join('\n')}`;
+}
+
 // ---- Layer 1: direct-port access (static is served by nginx; process apps own the port) ----
 // Process runtimes (node/nodered) bind direct_port themselves via PM2 — nginx
 // never listens there, so proxy_routes/https only ever attach to a STATIC
@@ -173,10 +207,21 @@ function writePortConf(site) {
   const file = path.join(config.paths.nginxPorts, `${site.name}.conf`);
   const wantBlock = site.runtime === 'static' && site.direct_port && site.direct_port_enabled;
   if (wantBlock) {
-    const routes = routeLocations(site.id);
-    const body = `    root ${currentPath(site)};
+    const rows = enabledRoutes(site.id);
+    const routes = routeLocations(rows);
+    const head = `    root ${currentPath(site)};
     index index.html;
-${routes.length ? routes.join('\n\n') + '\n\n' : ''}    location / { try_files $uri $uri/ /index.html; }`;
+${routes.length ? routes.join('\n\n') + '\n\n' : ''}`;
+    // http block: NEVER carries sub_filter — the plain port must serve the
+    // deployed bundle byte-for-byte (it is the main path for every PC).
+    const body = `${head}    location / { try_files $uri $uri/ /index.html; }`;
+    const filters = rewriteFilters(rows);
+    const httpsBody = filters
+      ? `${head}    location / {
+        try_files $uri $uri/ /index.html;
+${filters}
+    }`
+      : body;
     let conf = `# layer1 direct-port for ${site.name}
 server {
     listen ${site.direct_port};
@@ -201,7 +246,7 @@ server {
     ssl_certificate ${base}/fullchain.pem;
     ssl_certificate_key ${base}/privkey.pem;
 ${TLS}
-${body}
+${httpsBody}
 }
 `;
     }

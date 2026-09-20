@@ -227,4 +227,46 @@ router.post('/https/regenerate', guard.adminOnly, (req, res) => {
   res.json(st);
 });
 
+// --- Self-update (AI full control 2.1): the manager pulls its own new code and
+// swaps itself with no one at the console. Heavy lifting is out-of-process
+// (src/selfupdate.js + scripts/selfupdate.ps1) with a health gate + rollback.
+const selfupdate = require('../selfupdate');
+
+router.get('/update/status', guard.adminOnly, (req, res) => res.json(selfupdate.status()));
+
+router.get('/update/log', guard.adminOnly, (req, res) => {
+  const n = Math.min(2000, Math.max(1, parseInt(req.query.lines, 10) || 200));
+  res.type('text/plain').send(selfupdate.tailLog(n));
+});
+
+router.get('/update/config', guard.adminOnly, (req, res) => res.json({ repoDir: selfupdate.repoDir() }));
+
+router.put('/update/config', guard.adminOnly, (req, res) => {
+  try {
+    const repoDir = selfupdate.setRepoDir(req.body && req.body.repoDir);
+    audit(req.user, 'self-update-config', repoDir || '(cleared)');
+    res.json({ repoDir });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.post('/update', guard.adminOnly, async (req, res) => {
+  const b = req.body || {};
+  const ref = String(b.ref || 'main').trim();
+  const timeout = b.healthTimeoutSec === undefined ? 90 : Number(b.healthTimeoutSec);
+  if (!Number.isInteger(timeout) || timeout < 10 || timeout > 600) {
+    return res.status(400).json({ error: 'healthTimeoutSec must be 10-600' });
+  }
+  try {
+    const r = await selfupdate.start({ ref, user: req.user, healthTimeoutSec: timeout });
+    audit(req.user, 'self-update', r.target.slice(0, 7), `${r.from} -> ${r.target.slice(0, 7)} (${ref})`);
+    res.status(202).json({ started: true, ...r, status: '/api/system/update/status' });
+  } catch (e) {
+    const busy = /already in progress/.test(e.message);
+    audit(req.user, 'self-update-refused', ref, e.message);
+    res.status(busy ? 409 : 400).json({ error: e.message });
+  }
+});
+
 module.exports = router;
