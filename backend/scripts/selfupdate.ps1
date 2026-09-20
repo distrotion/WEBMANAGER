@@ -26,6 +26,8 @@ param(
   [int]$Port = 8088,
   [int]$HealthTimeoutSec = 90,
   [int]$KeepReleases = 3,
+  [string]$GitExe = 'git',                     # SYSTEM's PATH is not the admin's — the API passes config.git.exe
+  [string]$TaskName = '',                      # the Scheduled Task that launched us; deleted first thing
   [switch]$Simulate,
   [switch]$SkipNpm
 )
@@ -46,7 +48,15 @@ $NewUi      = Join-Path $RepoDir 'ui\build\web'
 $ShortTarget = $Target.Substring(0, [Math]::Min(7, $Target.Length))
 $Stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
 $PidFile = Join-Path $UpdateDir 'sim.pid'
+$Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 New-Item -ItemType Directory -Force -Path $UpdateDir | Out-Null
+
+# The run-once task keeps its time trigger after /Run; delete it before it can
+# fire a second update on top of this one.
+if ($TaskName -and $OnWindows) { & schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null }
+
+# keep the log bounded (npm output lands here too)
+if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 5MB) { Move-Item -Force $LogFile "$LogFile.1" }
 
 # ---------------------------------------------------------------- state ----
 # state.json is the ONLY channel back to the API. Every step rewrites it, so a
@@ -63,7 +73,8 @@ function Set-State([hashtable]$fields) {
   foreach ($k in $fields.Keys) { $script:State[$k] = $fields[$k] }
   $script:State['updatedAt'] = (Get-Date).ToString('o')
   $tmp = "$StateFile.tmp"
-  $script:State | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $tmp
+  # PowerShell 5.1's -Encoding UTF8 writes a BOM, which Node's JSON.parse rejects
+  [IO.File]::WriteAllText($tmp, ($script:State | ConvertTo-Json -Depth 5), $Utf8NoBom)
   Move-Item -Force $tmp $StateFile
 }
 function Log([string]$m) {
@@ -80,9 +91,14 @@ function Step([string]$name) { Log "== $name"; Set-State @{ step = $name } }
 function Invoke-Native([string]$exe, [string[]]$argv) {
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
+  $global:LASTEXITCODE = $null   # so a command that never ran cannot report the previous exit code
   try {
     & $exe @argv 2>&1 | ForEach-Object { Log "    $_" }
+    if ($null -eq $LASTEXITCODE) { Log "    (could not run $exe)"; return -1 }
     return $LASTEXITCODE
+  } catch {
+    Log "    (could not run ${exe}: $($_.Exception.Message))"
+    return -1
   } finally { $ErrorActionPreference = $prev }
 }
 
@@ -100,9 +116,9 @@ function Copy-Tree([string]$from, [string]$to, [string[]]$excludeDirs = @(), [st
   $rc = @($from, $to, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:3', '/W:2')
   if ($excludeDirs.Count)  { $rc += '/XD'; $rc += $excludeDirs }
   if ($excludeFiles.Count) { $rc += '/XF'; $rc += $excludeFiles }
-  & robocopy @rc | Out-Null
-  # robocopy: 0-7 = success variants, 8+ = at least one copy failed
-  if ($LASTEXITCODE -ge 8) { throw "robocopy $from -> $to failed ($LASTEXITCODE)" }
+  # robocopy: 0-7 = success variants, 8+ = at least one copy failed, -1 = did not run
+  $code = Invoke-Native 'robocopy' $rc
+  if ($code -ge 8 -or $code -lt 0) { throw "robocopy $from -> $to failed ($code)" }
 }
 
 function Stop-Manager {
@@ -117,7 +133,10 @@ function Stop-Manager {
   }
   Stop-Service wm-manager -Force -ErrorAction SilentlyContinue
   $svc = Get-Service wm-manager -ErrorAction SilentlyContinue
-  if ($svc) { $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)) }
+  if (-not $svc) { throw 'service wm-manager not found - refusing to copy over a possibly running manager' }
+  $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+  $svc.Refresh()
+  if ($svc.Status -ne 'Stopped') { throw "wm-manager did not stop (status $($svc.Status))" }
   Start-Sleep -Seconds 2   # let node-pty / better-sqlite3 file handles close
 }
 
@@ -135,7 +154,7 @@ function Start-Manager {
 # Health gate: 200 on /api/health AND the version it reports is the one we
 # just installed. "Service is Running" alone proves nothing — node may still be
 # crash-looping under NSSM's auto-restart.
-function Wait-Healthy([string]$expectShort, [int]$timeoutSec) {
+function Wait-Healthy([string]$expectShort, [int]$timeoutSec, [string]$rejectShort = '') {
   $deadline = (Get-Date).AddSeconds($timeoutSec)
   $last = ''
   while ((Get-Date) -lt $deadline) {
@@ -145,7 +164,9 @@ function Wait-Healthy([string]$expectShort, [int]$timeoutSec) {
       if ($r.StatusCode -eq 200) {
         $b = $r.Content | ConvertFrom-Json
         $last = "$($b.version)"
-        if ($last.StartsWith($expectShort)) { return @{ ok = $true; version = $last } }
+        # empty expectation = "any real version that is NOT the release we just rejected"
+        $accept = if ($expectShort) { $last.StartsWith($expectShort) } else { $last -and ($rejectShort -eq '' -or -not $last.StartsWith($rejectShort)) }
+        if ($accept) { return @{ ok = $true; version = $last } }
       }
     } catch { $last = "no answer: $($_.Exception.Message)" }
   }
@@ -154,14 +175,18 @@ function Wait-Healthy([string]$expectShort, [int]$timeoutSec) {
 
 function Read-EnvValue([string]$key) {
   if (-not (Test-Path $EnvFile)) { return $null }
-  $m = Get-Content $EnvFile | Where-Object { $_ -match "^$key=" } | Select-Object -First 1
+  $m = Get-Content -Encoding UTF8 $EnvFile | Where-Object { $_ -match "^$key=" } | Select-Object -First 1
   if ($m) { return $m.Substring($key.Length + 1) }
   return $null
 }
 function Write-EnvValue([string]$key, [string]$value) {
   if (-not (Test-Path $EnvFile)) { return }
-  $keep = @(Get-Content $EnvFile | Where-Object { $_ -notmatch "^$key=" })
-  ($keep + "$key=$value") | Set-Content -Encoding ASCII $EnvFile
+  # atomic (tmp + move) and BOM-less UTF-8: this file holds JWT_SECRET/ADMIN_PASS —
+  # a truncated or ASCII-flattened .env is not recoverable
+  $keep = @(Get-Content -Encoding UTF8 $EnvFile | Where-Object { $_ -notmatch "^$key=" })
+  $tmp = "$EnvFile.tmp"
+  [IO.File]::WriteAllText($tmp, (($keep + "$key=$value") -join "`r`n") + "`r`n", $Utf8NoBom)
+  Move-Item -Force $tmp $EnvFile
 }
 
 function Invoke-Npm([string]$dir) {
@@ -183,7 +208,7 @@ function Invoke-Npm([string]$dir) {
 $oldVersion = Read-EnvValue 'WM_VERSION'
 if (-not $oldVersion) { $oldVersion = 'unknown' }
 $oldShort = ($oldVersion -split ' ')[0]
-$backupDir = Join-Path $UpdateDir "releases\$oldShort-$Stamp"
+$backupDir = Join-Path $UpdateDir "releases\$Stamp-$oldShort"
 $lockChanged = $false
 $backedUp = $false
 $stopped = $false
@@ -202,17 +227,20 @@ function Invoke-Rollback([string]$why) {
     Step 'rollback: stop'
     Stop-Manager
     Step 'rollback: restore files'
-    Copy-Tree (Join-Path $backupDir 'backend') $BackendDir @() @('.env')
+    # /XD node_modules: the backup has none (unless the lockfile changed, handled
+    # below), and /MIR without it would purge the live one
+    Copy-Tree (Join-Path $backupDir 'backend') $BackendDir @('node_modules') @('.env')
     if (Test-Path (Join-Path $backupDir 'ui')) { Copy-Tree (Join-Path $backupDir 'ui') $UiDir }
     if (Test-Path (Join-Path $backupDir 'node_modules')) {
       Step 'rollback: restore node_modules'
       Copy-Tree (Join-Path $backupDir 'node_modules') (Join-Path $BackendDir 'node_modules')
     }
-    Write-EnvValue 'WM_VERSION' $oldVersion
+    $envBak = Join-Path $backupDir 'env.bak'
+    if (Test-Path $envBak) { Copy-Item -Force $envBak "$EnvFile.tmp"; Move-Item -Force "$EnvFile.tmp" $EnvFile } else { Write-EnvValue 'WM_VERSION' $oldVersion }
     Step 'rollback: start'
     Start-Manager
     $expect = if ($oldShort -eq 'unknown') { '' } else { $oldShort }
-    $h = Wait-Healthy $expect $HealthTimeoutSec
+    $h = Wait-Healthy $expect $HealthTimeoutSec $ShortTarget
     Set-State @{
       status = 'rolled-back'; step = 'done'; finishedAt = (Get-Date).ToString('o')
       error = $why; health = $h
@@ -232,7 +260,9 @@ function Invoke-Rollback([string]$why) {
 try {
   Step 'checkout'
   $co = if ($Branch) { @('-C', $RepoDir, 'checkout', '-q', '-B', $Branch, $Target) } else { @('-C', $RepoDir, 'checkout', '-q', '--detach', $Target) }
-  if ((Invoke-Native 'git' $co) -ne 0) { throw "git checkout $ShortTarget failed" }
+  if ((Invoke-Native $GitExe $co) -ne 0) { throw "git checkout $ShortTarget failed" }
+  $head = (& $GitExe -C $RepoDir rev-parse HEAD 2>$null)
+  if ("$head".Trim() -ne $Target) { throw "checkout did not land on $ShortTarget (HEAD is '$head')" }
   if (-not (Test-Path (Join-Path $NewBackend 'src\server.js'))) { throw "checkout has no backend\src\server.js" }
 
   Step 'backup'
@@ -244,6 +274,9 @@ try {
     $lockChanged = (Get-FileHash $oldLock).Hash -ne (Get-FileHash $newLock).Hash
   } elseif ((Test-Path $oldLock) -or (Test-Path $newLock)) { $lockChanged = $true }
   Copy-Tree $BackendDir (Join-Path $backupDir 'backend') @('node_modules') @('.env')
+  # .env is excluded from the tree copy (secrets stay out of releases\backend) but
+  # it IS rewritten below, so keep one private copy to restore from
+  if (Test-Path $EnvFile) { Copy-Item -Force $EnvFile (Join-Path $backupDir 'env.bak') }
   if (Test-Path $UiDir) { Copy-Tree $UiDir (Join-Path $backupDir 'ui') }
   if ($lockChanged -and (Test-Path (Join-Path $BackendDir 'node_modules'))) {
     Log 'package-lock changed -> backing up node_modules too'

@@ -79,7 +79,11 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PS
   ok('โฟลเดอร์ที่ไม่ใช่ git checkout ตั้งไม่ได้', /not a git checkout/.test(err), err);
   err = (() => { try { selfupdate.setRepoDir('relative/path'); return null; } catch (e) { return e.message; } })();
   ok('path ไม่ absolute ตั้งไม่ได้', /absolute/.test(err), err);
+  err = (() => { try { selfupdate.setRepoDir('/tmp/repo&whoami'); return null; } catch (e) { return e.message; } })();
+  ok('path ที่มี & (cmd.exe metachar) ตั้งไม่ได้', /may not contain/.test(err), err);
   eq('ตั้ง repo dir ที่ถูกต้องได้', selfupdate.setRepoDir(checkout), checkout);
+  err = await selfupdate.start({ ref: 'origin/main', launcher: async () => {} }).catch((e) => e.message);
+  ok('ref origin/main ปฏิเสธ (กัน local branch ชื่อ origin/main)', /without origin/.test(err), err);
   err = await selfupdate.start({ ref: '-oops', launcher: async () => {} }).catch((e) => e.message);
   ok('ref ขึ้นต้นด้วย - ปฏิเสธ (กัน git option injection)', /may not start with/.test(err), err);
   err = await selfupdate.start({ ref: 'no-such-branch', launcher: async () => {} }).catch((e) => e.message);
@@ -118,6 +122,9 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PS
   ok('launcher พัง → error กลับไป', /schtasks exploded/.test(err), err);
   eq('และ state ถูกปิดเป็น failed ไม่ค้าง queued', readState().status, 'failed');
   ok('ปลดล็อกแล้ว', selfupdate.status().inFlight === false);
+  // Windows PowerShell 5.1 writes UTF-8 with a BOM — must still parse
+  fs.writeFileSync(selfupdate.paths.STATE_FILE, '\uFEFF' + JSON.stringify({ ...st, status: 'running', helperPid: process.pid }));
+  ok('state.json ที่มี BOM (PS 5.1) ยังอ่านได้ → lock ยังทำงาน', selfupdate.status().inFlight === true);
 
   if (!hasPwsh) {
     ok('helper e2e ข้าม: ไม่มี pwsh บนเครื่องนี้ (ติดตั้ง `brew install powershell` เพื่อรันส่วนนี้)', true);
@@ -133,7 +140,10 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PS
   g(checkout, 'checkout', '-q', hashA);
   fs.copyFileSync(path.join(checkout, 'backend', 'src', 'server.js'), path.join(appBackend, 'src', 'server.js'));
   fs.copyFileSync(path.join(checkout, 'backend', 'package.json'), path.join(appBackend, 'package.json'));
-  fs.writeFileSync(path.join(appBackend, '.env'), `PORT=${PORT}\nSECRET=keep-me\nWM_VERSION=${hashA.slice(0, 7)} (2026-01-01)\n`);
+  fs.writeFileSync(path.join(appBackend, '.env'), `PORT=${PORT}\nSECRET=keep-me\nNAME=ไทย\nWM_VERSION=${hashA.slice(0, 7)} (2026-01-01)\n`);
+  // installed deps live only in the app dir (never in the checkout) — rollback must keep them
+  fs.mkdirSync(path.join(appBackend, 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(appBackend, 'node_modules', 'dep', 'index.js'), 'module.exports = 1;\n');
   // the "service" that is currently running
   const svc = spawn(process.execPath, [path.join(appBackend, 'src', 'server.js')], { stdio: 'ignore' });
   fs.mkdirSync(selfupdate.paths.UPDATE_DIR, { recursive: true });
@@ -153,6 +163,10 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PS
   eq('health ตอบ version B', await until(healthVersion, { timeoutMs: 5000 }), `${hashB.slice(0, 7)} (${today})`);
   ok('.env เดิมรอด (SECRET ยังอยู่)', /SECRET=keep-me/.test(fs.readFileSync(path.join(appBackend, '.env'), 'utf8')));
   ok('.env ได้ WM_REPO_DIR', fs.readFileSync(path.join(appBackend, '.env'), 'utf8').includes(`WM_REPO_DIR=${checkout}`));
+  ok('.env ค่าภาษาไทยไม่ถูกแปลงเป็น ? (UTF-8 ไม่ใช่ ASCII)', /NAME=ไทย/.test(fs.readFileSync(path.join(appBackend, '.env'), 'utf8')));
+  ok('.env ไม่มี BOM', fs.readFileSync(path.join(appBackend, '.env'))[0] !== 0xef);
+  ok('node_modules รอดหลังอัปเดต', fs.existsSync(path.join(appBackend, 'node_modules', 'dep', 'index.js')));
+  ok('backup มี env.bak ไว้กู้ (นอก backend/)', fs.existsSync(path.join(st.backupDir, 'env.bak')));
   ok('มี backup ของ A', fs.existsSync(path.join(st.backupDir, 'backend', 'src', 'server.js')));
   ok('backup ไม่มี .env (ไม่ก็อป secret ไปกอง)', !fs.existsSync(path.join(st.backupDir, 'backend', '.env')));
   eq('checkout เลื่อน main ไป B', g(checkout, 'rev-parse', 'HEAD'), hashB);
@@ -169,6 +183,10 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PS
   ok('rollback.ok = true', st.rollback && st.rollback.ok === true, JSON.stringify(st.rollback));
   eq('health กลับมาตอบ version B', await until(healthVersion, { timeoutMs: 5000 }), `${hashB.slice(0, 7)} (${today})`);
   ok('ไฟล์ server.js กลับเป็นของ B', !/simulated broken/.test(fs.readFileSync(path.join(appBackend, 'src', 'server.js'), 'utf8')));
+  ok('node_modules รอดหลัง rollback (audit #1)', fs.existsSync(path.join(appBackend, 'node_modules', 'dep', 'index.js')));
+  ok('.env หลัง rollback ยังมี SECRET + WM_VERSION ของ B', /SECRET=keep-me/.test(fs.readFileSync(path.join(appBackend, '.env'), 'utf8')) &&
+    fs.readFileSync(path.join(appBackend, '.env'), 'utf8').includes(`WM_VERSION=${hashB.slice(0, 7)}`));
+  ok('ชื่อ backup ขึ้นต้นด้วย timestamp (prune ตามเวลา)', /releases\/\d{8}-\d{6}-/.test(st.backupDir.replace(/\\/g, '/')), st.backupDir);
   ok(`ทั้งรอบจบใน < 120 วิ (ใช้ ${secs} วิ)`, secs < 120);
   ok('log เล่าลำดับ (health gate → ROLLBACK)', /health gate/.test(selfupdate.tailLog()) && /ROLLBACK/.test(selfupdate.tailLog()));
 

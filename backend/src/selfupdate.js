@@ -35,9 +35,24 @@ const SETTING_REPO_DIR = 'selfupdate_repo_dir';
 
 let starting = false; // in-process lock covering the fetch window before state.json says 'running'
 
+// Values that end up in run.cmd are parsed by cmd.exe: % expands variables even
+// inside quotes, and & | ^ < > ! " break the command. No real install path
+// needs them, so refuse rather than escape.
+function cmdUnsafe(s) {
+  const m = String(s).match(/[%&|^<>!"]/);
+  return m ? `"${m[0]}"` : null;
+}
+
+// A token embedded in a clone URL (https://x-access-token:PAT@host/…) must not
+// reach the log or an error message.
+function scrubUrl(u) {
+  return String(u).replace(/:\/\/[^@/]*@/, '://***@');
+}
+
 function readState() {
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    // strip a BOM in case an older helper (PowerShell 5.1 -Encoding UTF8) wrote one
+    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     return null;
   }
@@ -73,6 +88,8 @@ function setRepoDir(dir) {
     return null;
   }
   if (/[\r\n\0]/.test(s) || !path.isAbsolute(s)) throw new Error('repoDir must be an absolute path');
+  const badChar = cmdUnsafe(s);
+  if (badChar) throw new Error(`repoDir may not contain ${badChar} (it is written into a .cmd launcher)`);
   if (!fs.existsSync(path.join(s, '.git'))) throw new Error(`${s} is not a git checkout (no .git)`);
   if (!fs.existsSync(path.join(s, 'backend', 'src', 'server.js'))) {
     throw new Error(`${s} does not look like a WEBMANAGER checkout (no backend/src/server.js)`);
@@ -124,15 +141,29 @@ function reconcileOnBoot() {
   if (!state || !['queued', 'running'].includes(state.status)) return;
   if (state.helperPid && pidAlive(state.helperPid)) return; // still working (it just restarted us)
   const version = String(require('./version'));
-  if (version.startsWith(String(state.target || '').slice(0, 7)) && state.step === 'health gate') {
+  // Only close it out once the helper's own gate window has clearly passed —
+  // during the gate the helper is alive and may still roll back.
+  const age = Date.now() - (Date.parse(state.updatedAt || 0) || 0);
+  const gateMs = 2 * (Number(state.healthTimeoutSec) || 90) * 1000;
+  if (age > gateMs && version.startsWith(String(state.target || '').slice(0, 7)) && state.step === 'health gate') {
     writeState({ ...state, status: 'success', step: 'done (closed at boot)', finishedAt: new Date().toISOString() });
   }
 }
 
 function tailLog(lines = 200) {
   try {
-    const all = fs.readFileSync(LOG_FILE, 'utf8').split(/\r?\n/);
-    return all.slice(Math.max(0, all.length - lines)).join('\n');
+    // bounded read: only the last 256 KB, never the whole file into memory
+    const fd = fs.openSync(LOG_FILE, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, 256 * 1024);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      const all = buf.toString('utf8').split(/\r?\n/);
+      return all.slice(Math.max(0, all.length - lines)).join('\n');
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     return '';
   }
@@ -147,19 +178,22 @@ async function gitOut(args, opts = {}) {
 // Manager on the server), then once more with the panel's stored token — the
 // case that actually bit us was an expired token in the checkout.
 async function fetchOrigin(dir) {
-  const remote = await gitOut(['-C', dir, 'remote', 'get-url', 'origin']);
+  // 'silent' channel: the URL may carry an embedded token
+  const remote = await gitOut(['-C', dir, 'remote', 'get-url', 'origin'], { channel: 'silent' });
   if (remote.code !== 0) throw new Error('checkout has no origin remote');
-  let r = await gitOut(['-C', dir, 'fetch', 'origin', '--prune']);
-  if (r.code === 0) return remote.out;
-  const authed = git.authedUrl(remote.out);
-  if (authed !== remote.out) {
+  const embedded = (remote.out.match(/:\/\/[^@/]*:([^@/]+)@/) || [])[1];
+  let r = await gitOut(['-C', dir, 'fetch', 'origin', '--prune'], { redact: embedded || undefined });
+  if (r.code === 0) return scrubUrl(remote.out);
+  const plain = scrubUrl(remote.out).replace('://***@', '://');
+  const authed = git.authedUrl(plain);
+  if (authed !== plain) {
     emitLog(CHANNEL, '[self-update] fetch with checkout credentials failed — retrying with panel token');
     r = await gitOut(['-C', dir, 'fetch', authed, '+refs/heads/*:refs/remotes/origin/*'], {
-      redact: git.tokenFor(remote.out) || undefined,
+      redact: git.tokenFor(plain) || undefined,
     });
-    if (r.code === 0) return remote.out;
+    if (r.code === 0) return plain;
   }
-  throw new Error(`git fetch failed: ${r.out.split('\n').pop() || 'see system log'}`);
+  throw new Error(`git fetch failed: ${scrubUrl(r.out.split('\n').pop() || 'see system log')}`);
 }
 
 // Resolve what the user asked for to one commit. A branch name resolves to
@@ -186,8 +220,9 @@ function stageHelper() {
 function helperArgs({ helper, dir, target, branch, healthTimeoutSec, simulate }) {
   const a = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper,
     '-Root', config.ROOT, '-RepoDir', dir, '-Target', target, '-Port', String(config.PORT),
-    '-HealthTimeoutSec', String(healthTimeoutSec)];
+    '-HealthTimeoutSec', String(healthTimeoutSec), '-GitExe', config.git.exe];
   if (branch) a.push('-Branch', branch);
+  if (process.platform === 'win32') a.push('-TaskName', TASK_NAME);
   if (simulate) a.push('-Simulate', '-SkipNpm');
   return a;
 }
@@ -196,6 +231,10 @@ function helperArgs({ helper, dir, target, branch, healthTimeoutSec, simulate })
 // chars, so the task points at a one-line .cmd wrapper carrying the real
 // command. /SC ONCE needs a start time; /Run fires it immediately regardless.
 async function launchWindows(args) {
+  for (const a of args) {
+    const bad = cmdUnsafe(a);
+    if (bad) throw new Error(`launcher argument contains ${bad}, refusing to write run.cmd: ${a}`);
+  }
   const cmdFile = path.join(UPDATE_DIR, 'run.cmd');
   const quoted = args.map((s) => (/[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s)).join(' ');
   fs.writeFileSync(cmdFile, `@echo off\r\npowershell.exe ${quoted}\r\n`);
@@ -206,6 +245,9 @@ async function launchWindows(args) {
   if (create.code !== 0) throw new Error(`schtasks /Create failed: ${create.out.trim()}`);
   const go = await run('schtasks', ['/Run', '/TN', TASK_NAME], { channel: CHANNEL, timeoutMs: 30_000 });
   if (go.code !== 0) throw new Error(`schtasks /Run failed: ${go.out.trim()}`);
+  // /Run started it; the time trigger would start it AGAIN in 2 minutes. Disable
+  // now (the helper also deletes the task as its first step — belt and braces).
+  await run('schtasks', ['/Change', '/TN', TASK_NAME, '/DISABLE'], { channel: CHANNEL, timeoutMs: 30_000 });
 }
 
 // Dev/test (Mac/Linux): plain detached pwsh — nothing kills our tree here.
@@ -225,6 +267,9 @@ async function start({ ref = 'main', user, healthTimeoutSec = 90, simulate = fal
   const bad = guard.branch(ref);
   if (bad) throw new Error(bad);
   if (!/^[A-Za-z0-9._\-/]+$/.test(ref)) throw new Error('ref contains invalid characters');
+  // `checkout -B origin/main` would create a LOCAL branch named origin/main that
+  // shadows the remote-tracking ref for every later fetch. Ask for 'main'.
+  if (/^(origin|refs)\//.test(ref)) throw new Error('give the branch name without origin/ (e.g. "main")');
   const dir = repoDir();
   if (!dir) throw new Error('repo dir not configured (set WM_REPO_DIR via update.cmd, or PUT /api/system/update/config)');
   if (!fs.existsSync(path.join(dir, '.git'))) throw new Error(`repo dir ${dir} is not a git checkout`);
@@ -250,6 +295,7 @@ async function start({ ref = 'main', user, healthTimeoutSec = 90, simulate = fal
       requestedBy: (user && user.username) || 'system',
       requestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      healthTimeoutSec,
       helperPid: null,
       error: null,
       log: LOG_FILE,
