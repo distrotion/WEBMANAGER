@@ -31,7 +31,14 @@ if (Test-Path "$RepoDir\.git") {
   Info "git pull"
   Push-Location $RepoDir
   & git pull
+  $pullCode = $LASTEXITCODE
   Pop-Location
+  # A failed pull (expired token, local changes) used to fall through and
+  # re-install the OLD checkout while printing a version that looked updated.
+  if ($pullCode -ne 0) {
+    Bad "git pull failed (exit $pullCode) - fix the checkout (token/login, local changes) and run update.cmd again. Nothing was changed."
+    Read-Host "Press Enter to exit"; exit 1
+  }
 }
 
 # 2. stop the manager so native modules (better-sqlite3 / node-pty) aren't locked
