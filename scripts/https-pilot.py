@@ -17,6 +17,7 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   diff <a> <b>    compare two backups; any change outside this site's conf is flagged
   ftp-close       delete the temp FTP user                                                  [mutating]
   sites-smoke save|check   before/after update.cmd on ANY host (WM_URL): every site port answers as before
+  ca export|import|info    one CA for every host: export where PCs already trust it, import elsewhere (CA_PASS)
 
 Mutating steps accept --dry-run (print the request, send nothing). Config via env:
   WM_URL (default http://172.23.10.34:8088)  WM_USER (admin)  WM_PASS (prompted if unset)
@@ -460,6 +461,44 @@ def cmd_sites_smoke():
     print(f'{host}: all {len(now)} site ports answer exactly as before the update')
 
 
+def cmd_ca():
+    # `ca export` on the host whose CA client PCs trust, `ca import` on every
+    # other host; bundle kept encrypted (passphrase never stored) in the state dir
+    mode = ARGS[1] if len(ARGS) > 1 else ''
+    if mode not in ('export', 'import', 'info'):
+        die('usage: ca export|import|info   (WM_URL = host, CA_PASS = passphrase)')
+    bundle = STATE_DIR / 'ca-bundle.json'
+    if mode == 'info':
+        st, info = api('GET', '/api/system/ca')
+        print(f'  {st} {json.dumps(info)}')
+        return
+    pw = os.environ.get('CA_PASS') or getpass.getpass('CA bundle passphrase (min 12 chars): ')
+    if mode == 'export':
+        st, out = api('POST', '/api/system/ca/export', {'passphrase': pw})
+        if st != 200:
+            die(f'export {st}: {out}')
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        bundle.write_text(json.dumps({'cert': out['cert'], 'key': out['key'], 'fingerprint': out['fingerprint'], 'from': WM_URL}))
+        os.chmod(bundle, 0o600)
+        print(f'  exported CA {out["fingerprint"]} from {WM_URL} -> {bundle} (key encrypted)')
+        return
+    if not bundle.exists():
+        die('no ca-bundle.json — run ca export on the source host first')
+    b = json.loads(bundle.read_text())
+    if DRY:
+        print(f'  [dry-run] would import CA {b["fingerprint"]} (from {b["from"]}) into {WM_URL}')
+        return
+    st, r = api('POST', '/api/system/ca/import', {'cert': b['cert'], 'key': b['key'], 'passphrase': pw})
+    if st != 200:
+        die(f'import {st}: {r}')
+    print(f'  {WM_URL}: changed={r["changed"]} fingerprint={r["fingerprint"]} reissued={r.get("reissued")} restarted={r.get("restarted")}')
+    st, info = api('GET', '/api/system/ca')
+    ok = info.get('fingerprint') == b['fingerprint']
+    print(f'  verify: host CA {info.get("fingerprint")} {"== bundle OK" if ok else "!= bundle FAIL"}')
+    if not ok:
+        sys.exit(1)
+
+
 def cmd_ftp_close():
     if not FTP_FILE.exists():
         print('no temp FTP user recorded')
@@ -479,7 +518,7 @@ COMMANDS = {
     'ftp-open': cmd_ftp_open, 'backup': cmd_backup, 'routes': cmd_routes, 'verify-routes': cmd_verify_routes,
     'build-defines': cmd_build_defines, 'verify-build': cmd_verify_build,
     'https': cmd_https, 'verify-https': cmd_verify_https, 'diff': cmd_diff, 'ftp-close': cmd_ftp_close,
-    'sites-smoke': cmd_sites_smoke,
+    'sites-smoke': cmd_sites_smoke, 'ca': cmd_ca,
 }
 
 if __name__ == '__main__':

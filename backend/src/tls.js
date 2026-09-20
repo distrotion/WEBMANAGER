@@ -232,6 +232,100 @@ function regenerate() {
   return status();
 }
 
+// ---- one CA for every manager host ----------------------------------------
+// Each host mints its own CA by default, so client PCs would have to trust one
+// per server. Export from the host whose CA the PCs already trust, import on
+// the others: from then on every cert those hosts issue chains to that one CA.
+// The private key only ever leaves the box wrapped in a passphrase (PKCS#8,
+// AES-256) — the panel itself may be reached over plain http.
+function caFingerprint(cert) {
+  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+  const hex = forge.md.sha256.create().update(der).digest().toHex().toUpperCase();
+  return hex.match(/.{2}/g).join(':');
+}
+
+function caInfo() {
+  if (!fs.existsSync(CA_CERT)) return { hasCa: false };
+  const cert = forge.pki.certificateFromPem(fs.readFileSync(CA_CERT, 'utf8'));
+  const cn = cert.subject.getField('CN');
+  return {
+    hasCa: true,
+    fingerprint: caFingerprint(cert),
+    subject: cn ? cn.value : '',
+    notAfter: cert.validity.notAfter.toISOString(),
+  };
+}
+
+function exportCa(passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.length < 12) {
+    throw new Error('passphrase must be at least 12 characters');
+  }
+  const ca = ensureCa();
+  return {
+    cert: forge.pki.certificateToPem(ca.cert),
+    key: forge.pki.encryptRsaPrivateKey(ca.key, passphrase, { algorithm: 'aes256' }),
+    fingerprint: caFingerprint(ca.cert),
+  };
+}
+
+// Every leaf under certs/<name>/ (issueCert output) re-signed by the current CA,
+// keeping each cert's own SAN list. Returns the names that were re-issued.
+function reissueLeafCerts() {
+  const done = [];
+  if (!fs.existsSync(config.paths.certs)) return done;
+  for (const name of fs.readdirSync(config.paths.certs)) {
+    if (name === 'panel' || name.startsWith('backup-')) continue;
+    const file = path.join(config.paths.certs, name, 'fullchain.pem');
+    if (!fs.existsSync(file)) continue;
+    const leafPem = fs.readFileSync(file, 'utf8').split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----';
+    const san = forge.pki.certificateFromPem(leafPem).getExtension('subjectAltName');
+    const names = ((san && san.altNames) || []).map((n) => (n.type === 7 ? n.ip : n.value)).filter(Boolean);
+    if (!names.length) continue;
+    issueCert(name, names);
+    done.push(name);
+  }
+  return done;
+}
+
+function importCa({ cert, key, passphrase }) {
+  let caCert;
+  try {
+    caCert = forge.pki.certificateFromPem(String(cert || ''));
+  } catch {
+    throw new Error('cert is not a PEM certificate');
+  }
+  const bc = caCert.getExtension('basicConstraints');
+  if (!bc || !bc.cA) throw new Error('certificate is not a CA (basicConstraints cA=false)');
+  if (caCert.validity.notAfter <= new Date()) throw new Error('CA certificate has expired');
+  const caKey = forge.pki.decryptRsaPrivateKey(String(key || ''), String(passphrase || ''));
+  if (!caKey) throw new Error('cannot decrypt key — wrong passphrase or not an encrypted PEM key');
+  const pubFromKey = forge.pki.publicKeyToPem(forge.pki.setRsaPublicKey(caKey.n, caKey.e));
+  if (pubFromKey !== forge.pki.publicKeyToPem(caCert.publicKey)) throw new Error('key does not match certificate');
+
+  const fingerprint = caFingerprint(caCert);
+  const current = caInfo();
+  if (current.hasCa && current.fingerprint === fingerprint) {
+    return { changed: false, fingerprint, reissued: [] };
+  }
+
+  fs.mkdirSync(DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupDir = path.join(config.paths.certs, `backup-${stamp}`);
+  fs.mkdirSync(backupDir, { recursive: true });
+  for (const f of [CA_CERT, CA_KEY, SRV_CERT, SRV_KEY]) {
+    if (fs.existsSync(f)) fs.copyFileSync(f, path.join(backupDir, path.basename(f)));
+  }
+  fs.writeFileSync(CA_CERT, forge.pki.certificateToPem(caCert));
+  fs.writeFileSync(CA_KEY, forge.pki.privateKeyToPem(caKey), { mode: 0o600 });
+
+  // Everything signed by the old CA is now untrusted by anyone holding the new
+  // one — re-mint the panel/FTPS cert and every site cert right away.
+  regenerate();
+  const reissued = reissueLeafCerts();
+  emitLog('system', `[tls] imported CA ${fingerprint} — re-issued panel cert + ${reissued.length} site cert(s); old files in ${backupDir}`);
+  return { changed: true, fingerprint, reissued, backupDir };
+}
+
 function status() {
   return {
     enabled: settings.get('https_enabled') === '1',
@@ -250,6 +344,9 @@ module.exports = {
   regenerate,
   status,
   caCertPath,
+  caInfo,
+  exportCa,
+  importCa,
   ensureServerCert,
   issueCert,
   localIps,

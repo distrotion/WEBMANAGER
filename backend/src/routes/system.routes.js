@@ -10,6 +10,56 @@ const guard = require('../guard');
 
 const router = express.Router();
 
+// --- Local CA: share one CA across every manager host (see tls.js) ---
+const tls = require('../tls');
+const { audit } = require('../audit');
+
+router.get('/ca', guard.adminOnly, (req, res) => res.json(tls.caInfo()));
+
+router.post('/ca/export', guard.adminOnly, (req, res) => {
+  try {
+    const out = tls.exportCa(req.body && req.body.passphrase);
+    audit(req.user, 'ca-export', out.fingerprint);
+    res.json(out);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.post('/ca/import', guard.adminOnly, async (req, res) => {
+  const b = req.body || {};
+  let result;
+  try {
+    result = tls.importCa({ cert: b.cert, key: b.key, passphrase: b.passphrase });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  if (!result.changed) return res.json({ ...result, restarted: [] });
+  const restarted = [];
+  const db = require('../db');
+  // Holders of a re-issued cert must load the new file: nginx (https sites),
+  // FTPS (panel cert), and any process whose env points at certs/<name>/.
+  if (db.prepare('SELECT COUNT(*) AS n FROM sites WHERE https_enabled=1').get().n > 0) {
+    await nginx.reload('system');
+    restarted.push('nginx');
+  }
+  const ftp = require('../ftp');
+  if (ftp.status().running && ftp.status().tls) {
+    await ftp.restart();
+    restarted.push('ftp');
+  }
+  const pm2 = require('../pm2');
+  for (const name of result.reissued) {
+    const needle = `${config.paths.certs}${require('path').sep}${name}${require('path').sep}`;
+    for (const s of db.prepare("SELECT * FROM sites WHERE runtime IN ('node','nodered') AND env_json LIKE ?").all(`%${needle.replace(/\\/g, '\\\\')}%`)) {
+      await pm2.restart(s, `site-${s.id}`);
+      restarted.push(s.name);
+    }
+  }
+  audit(req.user, 'ca-import', result.fingerprint, `reissued=${result.reissued.join(',')} restarted=${restarted.join(',')}`);
+  res.json({ ...result, restarted });
+});
+
 // --- Git credentials (Personal Access Token for private repos) ---
 router.get('/git-credentials', guard.adminOnly, (req, res) => {
   res.json({ hasToken: !!settings.get('git_token') });

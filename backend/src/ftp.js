@@ -132,6 +132,20 @@ async function reconcile() {
   return status();
 }
 
+// Force a stop/start so a re-issued server cert is read from disk again.
+async function restart() {
+  await stopInstance();
+  const c = cfg();
+  if (c.enabled) {
+    try {
+      await startInstance(c);
+    } catch (e) {
+      emitLog('system', `[ftp] เริ่มไม่สำเร็จ: ${e.message}`);
+    }
+  }
+  return status();
+}
+
 function status() {
   const c = cfg();
   return {
@@ -150,4 +164,4 @@ function start() {
   reconcile().catch((e) => emitLog('system', `[ftp] เริ่มไม่สำเร็จ: ${e.message}`));
 }
 
-module.exports = { start, reconcile, status };
+module.exports = { start, reconcile, restart, status };
