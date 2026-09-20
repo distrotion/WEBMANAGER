@@ -297,7 +297,14 @@ function importCa({ cert, key, passphrase }) {
   const bc = caCert.getExtension('basicConstraints');
   if (!bc || !bc.cA) throw new Error('certificate is not a CA (basicConstraints cA=false)');
   if (caCert.validity.notAfter <= new Date()) throw new Error('CA certificate has expired');
-  const caKey = forge.pki.decryptRsaPrivateKey(String(key || ''), String(passphrase || ''));
+  // a wrong passphrase yields garbage that forge either returns as null or
+  // fails to parse — both mean the same thing to the caller
+  let caKey = null;
+  try {
+    caKey = forge.pki.decryptRsaPrivateKey(String(key || ''), String(passphrase || ''));
+  } catch {
+    caKey = null;
+  }
   if (!caKey) throw new Error('cannot decrypt key — wrong passphrase or not an encrypted PEM key');
   const pubFromKey = forge.pki.publicKeyToPem(forge.pki.setRsaPublicKey(caKey.n, caKey.e));
   if (pubFromKey !== forge.pki.publicKeyToPem(caCert.publicKey)) throw new Error('key does not match certificate');
