@@ -104,6 +104,14 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
 
 ## Runbook 2026-09-20 (window หยุดทั้งวัน · ทำรอบเดียว)
 
+> **เปลี่ยนเป้า 2026-09-20 (เจ้าของ):** เหตุผลจริงของ https = **กล้องสแกนสด (`getUserMedia`) บน tablet** ต้องการ secure context — ไม่ใช่ "ทุกอย่างต้องเป็น https"
+> → ทำ https **เฉพาะ superapp** เป็น "ทางเลือก" **:7002** คู่กับ :7000 (http ยังเป็นหลักสำหรับ PC) · **ยกเลิก pilot UI-SOI8GWPLC :2521/:2443**
+> → ทางเลือก CA: ใช้ CA กลางของเรา (ทดสอบผ่านบน Mac + PC แล้ว) · cert สาธารณะ/โดเมนไม่เอา (เจ้าของ: "แค่อยากทำ ssl ภายใน") · tablet ที่ใช้กล้องลง CA ครั้งเดียว (Android: Settings → Install certificate → CA)
+> → route บน superapp 8 เส้น ตาม `global.dart:74-95` (`/api/gb` :18000 · `/api/qc` :15000 · `/api/inv` :18010 · `/api/sap` .168:14094 · `/api/sapbuf` .168:14090 · `/api/status` :18020 · `/api/ocr` :18030 · `/api/gwplc` :2520 sse/ws)
+> → `global.dart` 8 const → path relative (`scripts/https-pilot.py build-defines`) → build เดียวใช้ทั้ง :7000/:7002 → `buildup-superapp.sh`
+> → หน้ากล้องที่ได้ประโยชน์: P60 PROCESS MANUAL, P149 INV MASTER, CameraWeightRecord · หน้าที่ฝัง iframe http ใช้ไม่ได้**เฉพาะเมื่อเปิดผ่าน :7002** (PC ใช้ :7000 เหมือนเดิม)
+> สคริปต์ default เปลี่ยนเป็น `SITE_NAME=superapp SITE_PORT=7000 HTTPS_PORT=7002` แล้ว · ขั้น 1-5 ด้านล่างอ่านแทน "site 18/:2521/:2443" ด้วย "superapp/:7000/:7002"
+
 > ทุกขั้นมีคำสั่งใน `scripts/https-pilot.py` (รันจากเครื่อง dev · `WM_PASS` ทาง env · state/backup ที่ `~/.webmanager-pilot/` · ขั้นที่แก้ .34 มี `--dry-run`)
 > ลำดับ: (.32 ก่อน: `sites-smoke save`✓ → update → `sites-smoke check`) แล้ว .34: `sites-smoke save`✓ → update → `sites-smoke check` → `health` → `status` → `baseline`(ทำแล้ว 19 ก.ย.) → `ftp-open` → `backup before` → `routes` → `verify-routes` → `backup after-routes` → `diff before after-routes`
 > → `build-defines` → `./buildup.sh UI-SOI8GWPLC` → `verify-build` → `https` → `verify-https` → `backup after-https` → `diff before after-https` → `ftp-close`

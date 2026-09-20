@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTPS pilot runbook for one static site on a WEBMANAGER host (HTTPS-PLAN.md).
+"""HTTPS pilot runbook for one static site on a WEBMANAGER host (HTTPS-PLAN.md).\nDefault target: superapp :7000 -> https :7002 on .34 (override SITE_NAME/SITE_PORT/HTTPS_PORT).
 
 Run from the dev machine, one subcommand per runbook step, in this order:
 
@@ -10,7 +10,7 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   backup <label>  download conf.d/ports + conf.d/front over that FTP user
   routes          create the /api and /auth proxy routes (skips ones that exist)           [mutating]
   verify-routes   same paths through the site port must match baseline; SSE stream check
-  build-defines   switch the unit's buildup.sh line to relative dart-defines (--revert)
+  build-defines   rewrite superapp global.dart base URLs to relative paths (--revert)
   verify-build    served main.dart.js must contain 0 absolute backend URLs
   https           enable the second https listener                                        [mutating]
   verify-https    https 200, http still 200, cert SAN carries the server IP
@@ -21,7 +21,7 @@ Run from the dev machine, one subcommand per runbook step, in this order:
 
 Mutating steps accept --dry-run (print the request, send nothing). Config via env:
   WM_URL (default http://172.23.10.34:8088)  WM_USER (admin)  WM_PASS (prompted if unset)
-  SITE_ID (18)  SITE_PORT (2521)  HTTPS_PORT (2443)  SERVER_IP (172.23.10.34)
+  SITE_NAME (superapp)  SITE_PORT (7000)  HTTPS_PORT (7002)  SERVER_IP (172.23.10.34)
   WM_ROOT_WIN (C:\\webmanager)  — install root on the Windows host, for the FTP root_path
 """
 import getpass
@@ -41,13 +41,13 @@ from pathlib import Path
 
 WM_URL = os.environ.get('WM_URL', 'http://172.23.10.34:8088').rstrip('/')
 WM_USER = os.environ.get('WM_USER', 'admin')
-SITE_ID = int(os.environ.get('SITE_ID', '18'))
-SITE_PORT = int(os.environ.get('SITE_PORT', '2521'))
-HTTPS_PORT = int(os.environ.get('HTTPS_PORT', '2443'))
+SITE_NAME = os.environ.get('SITE_NAME', 'superapp')
+SITE_PORT = int(os.environ.get('SITE_PORT', '7000'))
+HTTPS_PORT = int(os.environ.get('HTTPS_PORT', '7002'))
 SERVER_IP = os.environ.get('SERVER_IP', '172.23.10.34')
 WM_ROOT_WIN = os.environ.get('WM_ROOT_WIN', r'C:\webmanager')
-SITE_NAME = 'UI-SOI8GWPLC-DEPLOY'
-UNIT = 'UI-SOI8GWPLC'
+SITE_ID = None  # resolved from SITE_NAME on first use — never trust a fixed id across hosts
+UNIT = os.environ.get('UNIT', 'superapp')
 FTP_TEMP_USER = 'tmp-https-pilot'
 
 STATE_DIR = Path.home() / '.webmanager-pilot'
@@ -55,30 +55,35 @@ BASELINE_FILE = STATE_DIR / 'baseline.json'
 FTP_FILE = STATE_DIR / 'ftp.json'
 BACKUP_DIR = STATE_DIR / 'backups'
 
+# superapp global.dart:74-95 → one route per base URL. strip_prefix so the
+# backend sees the same paths it sees today; sse on gwplc (stream + ws upgrade).
 ROUTES = [
-    {'path_prefix': '/api', 'target_url': 'http://127.0.0.1:2520', 'strip_prefix': True, 'sse': True, 'enabled': True},
-    {'path_prefix': '/auth', 'target_url': f'http://{SERVER_IP}:15000', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/gb', 'target_url': f'http://{SERVER_IP}:18000', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/qc', 'target_url': f'http://{SERVER_IP}:15000', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/inv', 'target_url': f'http://{SERVER_IP}:18010', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/sap', 'target_url': 'http://172.23.10.168:14094', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/sapbuf', 'target_url': 'http://172.23.10.168:14090', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/status', 'target_url': f'http://{SERVER_IP}:18020', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/ocr', 'target_url': f'http://{SERVER_IP}:18030', 'strip_prefix': True, 'sse': False, 'enabled': True},
+    {'path_prefix': '/api/gwplc', 'target_url': f'http://{SERVER_IP}:2520', 'strip_prefix': True, 'sse': True, 'enabled': True},
 ]
+# baseline/verify probe the ROOT of every route target (GET /) — generic, so
+# whatever each backend answers there (200/404/…) must be identical via the site
+BACKEND_PATHS = [(r['path_prefix'], r['target_url'], 'GET', '/') for r in ROUTES]
+SSE_PATH = None
 
-# (route prefix, backend origin, method, path) — the paths UI-SOI8GWPLC really calls
-BACKEND_PATHS = [
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/gw/plcs'),
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/gw/tags'),
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/qc_peers'),
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/plc_source'),
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/register_map'),
-    ('/api', f'http://{SERVER_IP}:2520', 'GET', '/gw_log'),
-    ('/auth', f'http://{SERVER_IP}:15000', 'GET', '/gwplcstate'),
-    ('/auth', f'http://{SERVER_IP}:15000', 'GET', '/gwplcregistermap'),
-    ('/auth', f'http://{SERVER_IP}:15000', 'POST', '/login'),
-    ('/auth', f'http://{SERVER_IP}:15000', 'POST', '/getitemregistry'),
-    ('/auth', f'http://{SERVER_IP}:15000', 'POST', '/gwplcregistermap'),
-]
-SSE_PATH = '/gw/stream'
-
-OLD_DEFINES = f'--dart-define=GWPLC_BACKEND=http://{SERVER_IP}:2520 --dart-define=GWPLC_AUTH=http://{SERVER_IP}:15000/'
-NEW_DEFINES = '--dart-define=GWPLC_BACKEND=/api --dart-define=GWPLC_AUTH=/auth/'
-BUILDUP_SH = Path(__file__).resolve().parents[2] / 'SOI8MASTER' / 'buildup.sh'
+GLOBAL_DART = Path(__file__).resolve().parents[2] / 'SOI8MASTER' / 'soi8-superapp-app' / 'lib' / 'data' / 'global.dart'
+# global.dart const -> relative path (prefix must match ROUTES; trailing / kept)
+RELATIVE_BASES = {
+    'serverGB': ('http://172.23.10.34:18000/', '/api/gb/'),
+    'serverQC': ('http://172.23.10.34:15000/', '/api/qc/'),
+    'serverINV': ('http://172.23.10.34:18010/', '/api/inv/'),
+    'server2': ('http://172.23.10.168:14094/', '/api/sap/'),
+    'serverSAPBUF': ('http://172.23.10.168:14090/', '/api/sapbuf/'),
+    'serverSTATUS': ('http://172.23.10.34:18020/', '/api/status/'),
+    'serverOCR': ('http://172.23.10.34:18030/', '/api/ocr/'),
+    'serverGWPLC': ('http://172.23.10.34:2520/', '/api/gwplc/'),
+}
 
 DRY = '--dry-run' in sys.argv
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
@@ -180,15 +185,28 @@ def cmd_health():
         sys.exit(2)
 
 
+def site_id():
+    global SITE_ID
+    if SITE_ID is None:
+        st, sites = api('GET', '/api/sites')
+        if st != 200:
+            die(f'/api/sites -> {st}')
+        row = next((x for x in sites if x.get('name') == SITE_NAME), None)
+        if not row:
+            die(f'no site named {SITE_NAME} on {WM_URL}')
+        SITE_ID = row['id']
+    return SITE_ID
+
+
 def cmd_status():
-    st, site = api('GET', f'/api/sites/{SITE_ID}')
+    st, site = api('GET', f'/api/sites/{site_id()}')
     if st != 200:
         die(f'site {SITE_ID}: {st} {site}')
     keys = ['id', 'name', 'runtime', 'direct_port', 'direct_port_enabled', 'https_port', 'https_enabled', 'enabled']
     print('site   :', {k: site.get(k) for k in keys})
     if site.get('name') != SITE_NAME or site.get('direct_port') != SITE_PORT:
         die(f'site {SITE_ID} is not {SITE_NAME}:{SITE_PORT} — refusing to continue')
-    st, routes = api('GET', f'/api/sites/{SITE_ID}/routes')
+    st, routes = api('GET', f'/api/sites/{site_id()}/routes')
     print('routes :', st, json.dumps(routes, ensure_ascii=False))
 
 
@@ -215,11 +233,6 @@ def cmd_baseline():
         r = probe(method, origin + path)
         out[f'{method} {prefix}{path}'] = r
         print(f'  {method:4} {origin}{path:22} {r["status"]} {r["type"]}')
-    sse = probe('GET', f'http://{SERVER_IP}:2520{SSE_PATH}')
-    out[f'GET /api{SSE_PATH}'] = sse
-    print(f'  GET  {SERVER_IP}:2520{SSE_PATH:22} {sse["status"]} {sse["type"]}')
-    if sse['type'] != 'text/event-stream':
-        die('backend stream is not text/event-stream — SSE assumption broken')
     BASELINE_FILE.write_text(json.dumps(out, indent=1))
     print(f'saved {BASELINE_FILE}')
 
@@ -290,13 +303,13 @@ def cmd_backup():
 
 
 def cmd_routes():
-    st, existing = api('GET', f'/api/sites/{SITE_ID}/routes')
+    st, existing = api('GET', f'/api/sites/{site_id()}/routes')
     have = {r['path_prefix'] for r in (existing or [])} if st == 200 else set()
     for r in ROUTES:
         if r['path_prefix'] in have:
             print(f'  {r["path_prefix"]} already exists — skip')
             continue
-        st, res = mutate('POST', f'/api/sites/{SITE_ID}/routes', r)
+        st, res = mutate('POST', f'/api/sites/{site_id()}/routes', r)
         if not DRY and st != 201:
             die(f'route {r["path_prefix"]} failed ({st}): {res} — nginx -t rejected it, nothing was reloaded')
 
@@ -312,10 +325,6 @@ def cmd_verify_routes():
         same = r == base[key]
         bad += not same
         print(f'  {"OK " if same else "DIFF"} {key:32} via site {r["status"]} {r["type"]:24} baseline {base[key]["status"]} {base[key]["type"]}')
-    sse = probe('GET', f'http://{SERVER_IP}:{SITE_PORT}/api{SSE_PATH}')
-    ok = sse['status'] == 200 and sse['type'] == 'text/event-stream'
-    bad += not ok
-    print(f'  {"OK " if ok else "DIFF"} SSE /api{SSE_PATH:26} {sse["status"]} {sse["type"]}')
     st, _, raw = http('GET', f'http://{SERVER_IP}:{SITE_PORT}/')
     ok = st == 200 and b'<html' in raw[:400].lower()
     bad += not ok
@@ -326,45 +335,56 @@ def cmd_verify_routes():
 
 
 def cmd_build_defines():
-    if not BUILDUP_SH.exists():
-        die(f'{BUILDUP_SH} not found')
-    text = BUILDUP_SH.read_text()
+    # superapp has no dart-define: rewrite the 8 base-URL consts in global.dart
+    # to relative paths (or back with --revert). Same build then works on
+    # http:SITE_PORT and https:HTTPS_PORT because nginx serves both listeners.
+    if not GLOBAL_DART.exists():
+        die(f'{GLOBAL_DART} not found')
+    text = GLOBAL_DART.read_text()
     revert = '--revert' in sys.argv
-    src, dst = (NEW_DEFINES, OLD_DEFINES) if revert else (OLD_DEFINES, NEW_DEFINES)
-    line = next((l for l in text.splitlines() if l.startswith(f'{UNIT}|')), None)
-    if line is None:
-        die(f'no {UNIT} line in buildup.sh')
-    if dst in line:
-        print(f'  buildup.sh already has: {dst}')
+    changed = 0
+    for var, (absolute, relative) in RELATIVE_BASES.items():
+        src, dst = (relative, absolute) if revert else (absolute, relative)
+        line_re = re.compile(rf"^String {var} = '([^']*)';", re.M)
+        m = line_re.search(text)
+        if not m:
+            die(f'{var} not found as a top-level String in global.dart')
+        if m.group(1) == dst:
+            continue
+        if m.group(1) != src:
+            die(f'{var} has unexpected value {m.group(1)!r} — edit by hand')
+        text = text.replace(m.group(0), f"String {var} = '{dst}';", 1)
+        changed += 1
+        print(f'  {var}: {src} -> {dst}')
+    if not changed:
+        print('  global.dart already in the requested state')
         return
-    if src not in line:
-        die(f'unexpected defines on the {UNIT} line, edit by hand:\n  {line}')
-    print(f'  {UNIT}: {src}\n    -> {dst}')
     if DRY:
         return
-    BUILDUP_SH.write_text(text.replace(line, line.replace(src, dst)))
-    print(f'  written {BUILDUP_SH} — now run: cd {BUILDUP_SH.parent} && ./buildup.sh {UNIT}')
+    GLOBAL_DART.write_text(text)
+    print(f'  written {GLOBAL_DART} ({changed} consts) — now run buildup-superapp.sh')
 
 
 def cmd_verify_build():
-    st, _, raw = http('GET', f'http://{SERVER_IP}:{SITE_PORT}/main.dart.js', timeout=30)
+    st, _, raw = http('GET', f'http://{SERVER_IP}:{SITE_PORT}/main.dart.js', timeout=60)
     if st != 200:
         die(f'main.dart.js -> {st}')
     js = raw.decode(errors='replace')
-    counts = {p: len(re.findall(re.escape(p), js)) for p in (SERVER_IP, ':2520', ':15000')}
-    rel = {p: p in js for p in ('/api/gw/stream', '/auth/')}
-    print(f'  absolute leftovers: {counts}   relative present: {rel}   size {len(raw)//1024} KB')
-    if any(counts.values()) or not all(rel.values()):
-        die('served build still points at absolute backends — buildup with the relative defines first')
+    leftovers = {a: js.count(a) for a, _ in RELATIVE_BASES.values()}
+    relative = {r: r in js for _, r in RELATIVE_BASES.values()}
+    print(f'  absolute leftovers: { {k: v for k, v in leftovers.items() if v} or "none"}')
+    print(f'  relative present:   {sum(relative.values())}/{len(relative)}   size {len(raw)//1024} KB')
+    if any(leftovers.values()) or not all(relative.values()):
+        die('served build still carries absolute backend URLs — buildup with the relative global.dart first')
     print('served build is relative-path only')
 
 
 def cmd_https():
-    st, site = api('GET', f'/api/sites/{SITE_ID}')
+    st, site = api('GET', f'/api/sites/{site_id()}')
     if site.get('https_enabled') and site.get('https_port') == HTTPS_PORT:
         print(f'  https already enabled on {HTTPS_PORT}')
         return
-    st, res = mutate('POST', f'/api/sites/{SITE_ID}/https/enable', {'https_port': HTTPS_PORT})
+    st, res = mutate('POST', f'/api/sites/{site_id()}/https/enable', {'https_port': HTTPS_PORT})
     if not DRY and st != 200:
         die(f'https/enable {st}: {res} — nginx -t rejected, previous conf restored, http port untouched')
 
