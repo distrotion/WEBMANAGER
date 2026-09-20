@@ -42,7 +42,8 @@ router.post('/:id/ssl/disable', guard.adminOnly, (req, res) => {
 // live under certs/<site>/ — outside sites/<name>/ — so a redeploy can never
 // pull them out from under a running process. SAN = every local IP plus any
 // extra names the caller passes (a DNS name clients use, say).
-const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
+// well-formed DNS name or IPv4: no empty labels, no label starting/ending with '-'
+const HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
 function certState(site) {
   const dir = path.join(config.paths.certs, site.name);
