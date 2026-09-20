@@ -27,8 +27,8 @@ function makeSite(overrides) {
 function addRoute(site, fields) {
   const info = db
     .prepare(
-      `INSERT INTO proxy_routes (site_id, path_prefix, target_url, strip_prefix, sse, enabled)
-       VALUES (@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled)`
+      `INSERT INTO proxy_routes (site_id, path_prefix, target_url, strip_prefix, sse, enabled, rewrite_from)
+       VALUES (@site_id,@path_prefix,@target_url,@strip_prefix,@sse,@enabled,@rewrite_from)`
     )
     .run({
       site_id: site.id,
@@ -37,6 +37,7 @@ function addRoute(site, fields) {
       strip_prefix: 1,
       sse: 0,
       enabled: 1,
+      rewrite_from: null,
       ...fields,
     });
   return db.prepare('SELECT * FROM proxy_routes WHERE id=?').get(info.lastInsertRowid);
@@ -199,6 +200,40 @@ function addRoute(site, fields) {
   db.prepare("UPDATE proxy_routes SET rewrite_from=NULL WHERE site_id=?").run(rwSite.id);
   nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(rwSite.id));
   eq('เอา rewrite ออก -> ไฟล์กลับมาเหมือนก่อนใส่ทุกไบต์', fs.readFileSync(rwFile, 'utf8'), noRewriteConf);
+
+  section('https entry gate: เฉพาะ /?<token> เปิดแอปได้บน https — http block ไม่แตะ');
+  ok('guard: token ปกติผ่าน', guard.entryQuery('tabletnonscada') === null);
+  ok('guard: ว่าง = ไม่มี gate', guard.entryQuery('') === null && guard.entryQuery(null) === null);
+  ok('guard: มี regex meta/quote ไม่ผ่าน', guard.entryQuery('a|b') !== null && guard.entryQuery('x"y') !== null && guard.entryQuery('a b') !== null);
+  const gSite = makeSite({ direct_port: 19003 });
+  tls.issueCert(gSite.name, ['172.23.10.34', '127.0.0.1']);
+  addRoute(gSite, { path_prefix: '/api/gb', target_url: 'http://172.23.10.34:18000', strip_prefix: 1, rewrite_from: 'http://172.23.10.34:18000/' });
+  db.prepare('UPDATE sites SET https_port=19445, https_enabled=1 WHERE id=?').run(gSite.id);
+  const gFile = path.join(config.paths.nginxPorts, `${gSite.name}.conf`);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(gSite.id));
+  const ungated = fs.readFileSync(gFile, 'utf8');
+  ok('ยังไม่ตั้ง entry_query -> ไม่มี map/403', !ungated.includes('wm_entry_deny') && !ungated.includes('403'));
+  db.prepare("UPDATE sites SET https_entry_query='tabletnonscada' WHERE id=?").run(gSite.id);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(gSite.id));
+  const gated = fs.readFileSync(gFile, 'utf8');
+  const cut = (c) => c.indexOf('# https entry gate for') > 0 ? c.indexOf('# https entry gate for') : c.indexOf('# layer1 direct-port TLS for');
+  eq('http block เหมือนตอนไม่มี gate ทุกไบต์', gated.slice(0, cut(gated)), ungated.slice(0, cut(ungated)));
+  ok('http block ไม่มี 403/entry', !gated.slice(0, cut(gated)).includes('403'));
+  const hs = gated.slice(gated.indexOf('# layer1 direct-port TLS for'));
+  ok(`map ประกาศก่อน server block ด้วยชื่อ $wm_entry_deny_${gSite.id}`, gated.indexOf(`$wm_entry_deny_${gSite.id} {`) < gated.indexOf('# layer1 direct-port TLS for'));
+  ok('map: มี token ใน query -> 0', gated.includes('"~\\|([^|]*&)?tabletnonscada(=|&|$)" 0;'));
+  ok('map: fetch ที่ไม่ใช่ document (service worker) -> 0', gated.includes('"~^(empty|script|worker|serviceworker)\\|" 0;'));
+  ok('map: default 1 (curl/ไม่มี header = deny)', gated.includes('default 1;'));
+  ok('location = / มี if deny -> 403', /location = \/ \{\n\s+if \(\$wm_entry_deny_\d+\) \{ return 403; \}/.test(hs));
+  ok('location = /index.html ก็ถูก gate', /location = \/index\.html \{\n\s+if \(\$wm_entry_deny_\d+\) \{ return 403; \}/.test(hs));
+  ok('location / เสิร์ฟ asset จริงเท่านั้น ไม่มี SPA fallback', hs.includes('try_files $uri =404;') && !hs.includes('try_files $uri $uri/ /index.html'));
+  ok('sub_filter ยังอยู่ใน location = / (index.html) และ location / (main.dart.js)', (hs.match(/sub_filter 'http:\/\/172\.23\.10\.34:18000\/' '\/api\/gb\/';/g) || []).length === 3);
+  ok('route /api/gb/ ยังอยู่ใน https block', hs.includes('location /api/gb/'));
+  const tGate = await nginx.test('silent');
+  eq('nginx -t ผ่านจริงกับ map + if', tGate.code, 0);
+  db.prepare('UPDATE sites SET https_entry_query=NULL WHERE id=?').run(gSite.id);
+  nginx.writePortConf(db.prepare('SELECT * FROM sites WHERE id=?').get(gSite.id));
+  eq('เอา entry_query ออก -> ไฟล์กลับเหมือนก่อนทุกไบต์', fs.readFileSync(gFile, 'utf8'), ungated);
 
   done();
 })().catch((e) => {

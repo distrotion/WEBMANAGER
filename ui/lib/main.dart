@@ -1394,6 +1394,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
   // time (the "open the old one alongside" rule from the migration plan).
   Future<void> _enableHttps() async {
     final ctrl = TextEditingController();
+    final entryCtrl = TextEditingController(text: s['https_entry_query']?.toString() ?? '');
     final port = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1410,6 +1411,16 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'https port (พอร์ตทดสอบ)', hintText: 'เช่น 2443'),
           ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: entryCtrl,
+            decoration: const InputDecoration(
+              labelText: 'entry gate — เปิดได้เฉพาะ /?<token> (ว่าง = ทั้งแอป)',
+              hintText: 'tabletnonscada',
+              helperText: 'ฝั่ง https เท่านั้น: หน้าอื่น/index.html ตรง ๆ ตอบ 403 · asset ยังเสิร์ฟ · http เดิมไม่แตะ',
+              helperMaxLines: 2,
+            ),
+          ),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('ยกเลิก')),
@@ -1418,7 +1429,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
       ),
     );
     if (port == null || port.isEmpty) return;
-    await _act('https/enable', {'https_port': int.tryParse(port)});
+    await _act('https/enable', {'https_port': int.tryParse(port), 'entry_query': entryCtrl.text.trim()});
   }
 
   // Pull the site row again so `deploying` (and status) reflect what just
@@ -1685,7 +1696,7 @@ class _SiteDetailPageState extends State<SiteDetailPage> {
                   }),
                 if (isStatic && s['direct_port'] != null && portOn)
                   s['https_enabled'] == true
-                      ? _btn('ปิด HTTPS (พอร์ต ${s['https_port']})', Icons.lock_open, () => _act('https/disable'))
+                      ? _btn('ปิด HTTPS (พอร์ต ${s['https_port']}${(s['https_entry_query'] ?? '').toString().isNotEmpty ? ' · /?${s['https_entry_query']}' : ''})', Icons.lock_open, () => _act('https/disable'))
                       : _btn('เปิด HTTPS (local CA, พอร์ตแยก)', Icons.https, _enableHttps),
               ]),
             if (Api.instance.isAdmin)

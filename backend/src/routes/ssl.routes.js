@@ -97,6 +97,9 @@ router.post('/:id/https/enable', guard.adminOnly, async (req, res) => {
     .prepare('SELECT name FROM sites WHERE id!=? AND (direct_port=? OR https_port=?)')
     .get(s.id, port, port);
   if (clash) return res.status(400).json({ error: `port ${port} already used by site "${clash.name}"` });
+  const badEntry = guard.entryQuery(req.body && req.body.entry_query);
+  if (badEntry) return res.status(400).json({ error: badEntry });
+  const entryQuery = (req.body && req.body.entry_query && String(req.body.entry_query).trim()) || null;
 
   const names = [...tls.localIps().filter((ip) => ip !== '127.0.0.1'), '127.0.0.1'];
   try {
@@ -105,18 +108,22 @@ router.post('/:id/https/enable', guard.adminOnly, async (req, res) => {
     return res.status(400).json({ error: `cert issue failed: ${e.message}` });
   }
 
-  db.prepare('UPDATE sites SET https_port=?, https_enabled=1 WHERE id=?').run(port, s.id);
+  const before = { https_port: s.https_port, https_enabled: s.https_enabled, https_entry_query: s.https_entry_query };
+  db.prepare('UPDATE sites SET https_port=?, https_enabled=1, https_entry_query=? WHERE id=?').run(port, entryQuery, s.id);
   const channel = `site-${s.id}`;
   const updated = getSite(s.id);
   const r = await nginx.applyConfig(() => nginx.writePortConf(updated), channel);
   if (!r.ok) {
-    db.prepare('UPDATE sites SET https_enabled=0 WHERE id=?').run(s.id);
+    // conf is already restored — put the row back to match it (re-enable on an
+    // already-https site must not leave it half-switched)
+    db.prepare('UPDATE sites SET https_port=@https_port, https_enabled=@https_enabled, https_entry_query=@https_entry_query WHERE id=@id')
+      .run({ ...before, id: s.id });
     emitLog(channel, `[https] เปิดไม่สำเร็จ (nginx -t ล้ม): ${r.error}`);
     return res.status(400).json({ error: `nginx -t failed, https not enabled: ${r.error}` });
   }
   await nginx.reload(channel);
   await firewall.openPort(port, channel).catch(() => {});
-  audit(req.user, 'https-enable', s.name, `:${port}`);
+  audit(req.user, 'https-enable', s.name, `:${port}${entryQuery ? ` entry /?${entryQuery}` : ''}`);
   res.json(getSite(s.id));
 });
 

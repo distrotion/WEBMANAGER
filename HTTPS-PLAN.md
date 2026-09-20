@@ -145,3 +145,11 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
 - **pilot script:** `ROUTES` 8 เส้นมี `rewrite_from` แล้ว · `routes` เพิ่ม `rewrite_from` ให้ route ที่มีอยู่ก่อน (PUT) และล้มถ้า panel เก่าเซฟค่านี้ไม่ได้ · `verify-build` ยิง `https://<host>:7002/main.dart.js` ผ่าน CA ต้อง absolute 0 / relative 8 + `http://<host>:7000/main.dart.js` ต้อง absolute 8 / relative 0 + เท่ากับ `DEPLOY_DIR/main.dart.js` ทุกไบต์ · env ใหม่ `BACKEND_IP` (default .34) แยกจาก `SERVER_IP` — ซ้อมบน .32 ใช้ `SERVER_IP=172.23.10.32` แต่ backend/rewrite ยังชี้ .34
 
 ลำดับซ้อมบน .32 (ข้อ 4 ใน `HTTPS-GATE-PROMPT.md`): เจ้าของ `git pull` + `update.cmd` บน .32 → `WM_URL=http://172.23.10.32:8088 SERVER_IP=172.23.10.32 scripts/https-pilot.py health` → สร้าง site static `superapp` repo `soi8-superapp-app-deploy` direct_port 7000 **autodeploy ปิด** → deploy → `routes` → `verify-routes` → `https` → `verify-https` → `verify-build` → tablet ลง CA แล้วเปิด `https://172.23.10.32:7002`
+
+### entry gate — https เปิดได้เฉพาะ `/?tabletnonscada` (เจ้าของ 2026-09-20 ผ่าน session ภารกิจ 2)
+
+- `sites.https_entry_query TEXT` · `POST /https/enable {https_port, entry_query}` · guard token `[A-Za-z0-9_-]{1,64}` · UI dialog มีช่อง · pilot env `ENTRY_QUERY` (default `tabletnonscada`, ว่าง = ทั้งแอป)
+- nginx (https block เท่านั้น · http block byte-identical มี test): `map "$http_sec_fetch_dest|$args" $wm_entry_deny_<id>` → query มี token = allow · fetch ที่ไม่ใช่ document (`empty/script/worker/serviceworker`) = allow (Flutter service worker prefetch `index.html` ด้วย dest `empty` — ถ้า 403 SW install ล้ม loader ค้าง ~4 วิ) · อื่น ๆ รวม curl ไม่มี header = deny
+  `location = /` if deny → 403, `try_files /index.html` · `location = /index.html` if deny → 403 · `location /` `try_files $uri =404` (ไม่มี SPA fallback) · sub_filter ทั้ง 3 location
+- เป็น **scope gate ไม่ใช่ auth** — หลังโหลดแอปแล้ว navigate ในแอปไม่ผ่าน nginx · หน้า NON-SCADA "ไม่ต้องล็อกอิน" อยู่แล้ว
+- ตรวจกับ nginx บน Mac: `/` 403 · `/?tabletnonscada` 200 · `/?x=1&tabletnonscada=1` 200 · `/?nottabletnonscada` 403 · `/index.html` (document) 403 · curl 403 · SW prefetch (`empty`) 200 · `/somepath` 404 · asset 200 · `verify-https` ยิงชุดเดียวกันนี้บนเครื่องจริง

@@ -198,6 +198,42 @@ function rewriteFilters(rows) {
 ${lines.join('\n')}`;
 }
 
+// https entry gate (sites.https_entry_query). Decided per request by a map
+// keyed on "<Sec-Fetch-Dest>|<query string>" so the rule is one variable:
+//   - query carries the token            -> allow (any fetch kind)
+//   - non-navigation fetch (empty/script/
+//     worker/serviceworker)              -> allow: the Flutter service worker
+//     prefetches index.html with dest "empty"; a 403 there fails SW install
+//     and stalls the loader ~4s on every open
+//   - anything else (document, or no
+//     Sec-Fetch-Dest at all e.g. curl)   -> deny
+// This is a scope gate ("only this page over https"), not an auth boundary.
+function entryGateMap(site) {
+  const t = site.https_entry_query;
+  return `# https entry gate for ${site.name}: only /?${t} may open the app on :${site.https_port}
+map "$http_sec_fetch_dest|$args" $wm_entry_deny_${site.id} {
+    default 1;
+    "~\\|([^|]*&)?${t}(=|&|$)" 0;
+    "~^(empty|script|worker|serviceworker)\\|" 0;
+}
+`;
+}
+
+function entryGateLocations(site, filters) {
+  const v = `$wm_entry_deny_${site.id}`;
+  const f = filters ? `\n${filters}` : '';
+  return `    location = / {
+        if (${v}) { return 403; }
+        try_files /index.html =404;${f}
+    }
+    location = /index.html {
+        if (${v}) { return 403; }${f}
+    }
+    location / {
+        try_files $uri =404;${f}
+    }`;
+}
+
 // ---- Layer 1: direct-port access (static is served by nginx; process apps own the port) ----
 // Process runtimes (node/nodered) bind direct_port themselves via PM2 — nginx
 // never listens there, so proxy_routes/https only ever attach to a STATIC
@@ -216,12 +252,15 @@ ${routes.length ? routes.join('\n\n') + '\n\n' : ''}`;
     // deployed bundle byte-for-byte (it is the main path for every PC).
     const body = `${head}    location / { try_files $uri $uri/ /index.html; }`;
     const filters = rewriteFilters(rows);
-    const httpsBody = filters
-      ? `${head}    location / {
+    const gated = !!(site.https_enabled && site.https_entry_query);
+    let httpsBody = body;
+    if (gated) httpsBody = `${head}${entryGateLocations(site, filters)}`;
+    else if (filters) {
+      httpsBody = `${head}    location / {
         try_files $uri $uri/ /index.html;
 ${filters}
-    }`
-      : body;
+    }`;
+    }
     let conf = `# layer1 direct-port for ${site.name}
 server {
     listen ${site.direct_port};
@@ -238,7 +277,7 @@ ${body}
     if (site.https_enabled && site.https_port) {
       const base = path.join(config.paths.certs, site.name).replace(/\\/g, '/');
       conf += `
-# layer1 direct-port TLS for ${site.name}
+${gated ? entryGateMap(site) : ''}# layer1 direct-port TLS for ${site.name}
 server {
     listen ${site.https_port} ssl;
     http2 on;

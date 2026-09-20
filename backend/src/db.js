@@ -315,6 +315,11 @@ const MIGRATIONS = {
     // every deploy. See nginx.js writePortConf().
     ['https_port', 'INTEGER'],
     ['https_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+    // https entry gate: when set, the https listener only lets a DOCUMENT
+    // request in when its query string carries this token (`/?tabletnonscada`);
+    // every other page load answers 403. Assets still serve (same SPA
+    // bundle), and the http block is untouched. NULL = whole app on https.
+    ['https_entry_query', 'TEXT'],
   ],
   monitors: [
     // Added after the monitors table first shipped (custom/replication checks).

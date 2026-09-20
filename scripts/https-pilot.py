@@ -12,8 +12,9 @@ Run from the dev machine, one subcommand per runbook step, in this order:
   verify-routes   same paths through the site port must match baseline; SSE stream check
   verify-build    https main.dart.js (via panel CA) = 0 absolute / 8 relative URLs;
                   http main.dart.js = untouched (8 absolute, byte-identical to DEPLOY_DIR/main.dart.js)
-  https           enable the second https listener                                        [mutating]
-  verify-https    https 200, http still 200, cert SAN carries the server IP
+  https           enable the second https listener (+ entry gate /?ENTRY_QUERY)             [mutating]
+  verify-https    https 200, http still 200, cert SAN carries the server IP;
+                  with ENTRY_QUERY: / and /index.html -> 403, /?<token> -> 200, assets 200
   diff <a> <b>    compare two backups; any change outside this site's conf is flagged
   ftp-close       delete the temp FTP user                                                  [mutating]
   sites-smoke save|check   before/after update.cmd on ANY host (WM_URL): every site port answers as before
@@ -23,6 +24,7 @@ Mutating steps accept --dry-run (print the request, send nothing). Config via en
   WM_URL (default http://172.23.10.34:8088)  WM_USER (admin)  WM_PASS (prompted if unset)
   SITE_NAME (superapp)  SITE_PORT (7000)  HTTPS_PORT (7002)  SERVER_IP (172.23.10.34 — host serving the site)
   BACKEND_IP (172.23.10.34 — where the 8 backends live; keep it on .34 when rehearsing the site on .32)
+  ENTRY_QUERY (tabletnonscada — only /?<token> opens the app on https; set empty for the whole app)
   WM_ROOT_WIN (C:\\webmanager)  — install root on the Windows host, for the FTP root_path
   DEPLOY_DIR  — local checkout of the site's deploy repo, for the http byte-compare in verify-build
                 (default ~/TPK/QC/ALL-REFRESH-NEW/SOI8MASTER/DEPLOY/soi8-superapp-app-deploy)
@@ -51,6 +53,8 @@ HTTPS_PORT = int(os.environ.get('HTTPS_PORT', '7002'))
 SERVER_IP = os.environ.get('SERVER_IP', '172.23.10.34')
 # where the 8 superapp backends live — stays .34 even when the SITE is rehearsed on .32
 BACKEND_IP = os.environ.get('BACKEND_IP', '172.23.10.34')
+# owner 2026-09-20: only the NON-SCADA tablet page goes over https for now
+ENTRY_QUERY = os.environ.get('ENTRY_QUERY', 'tabletnonscada').strip()
 WM_ROOT_WIN = os.environ.get('WM_ROOT_WIN', r'C:\webmanager')
 SITE_ID = None  # resolved from SITE_NAME on first use — never trust a fixed id across hosts
 UNIT = os.environ.get('UNIT', 'superapp')
@@ -212,7 +216,7 @@ def cmd_status():
     st, site = api('GET', f'/api/sites/{site_id()}')
     if st != 200:
         die(f'site {SITE_ID}: {st} {site}')
-    keys = ['id', 'name', 'runtime', 'direct_port', 'direct_port_enabled', 'https_port', 'https_enabled', 'enabled']
+    keys = ['id', 'name', 'runtime', 'direct_port', 'direct_port_enabled', 'https_port', 'https_enabled', 'https_entry_query', 'enabled']
     print('site   :', {k: site.get(k) for k in keys})
     if site.get('name') != SITE_NAME or site.get('direct_port') != SITE_PORT:
         die(f'site {SITE_ID} is not {SITE_NAME}:{SITE_PORT} — refusing to continue')
@@ -399,12 +403,16 @@ def cmd_verify_build():
 
 def cmd_https():
     st, site = api('GET', f'/api/sites/{site_id()}')
-    if site.get('https_enabled') and site.get('https_port') == HTTPS_PORT:
-        print(f'  https already enabled on {HTTPS_PORT}')
+    want_entry = ENTRY_QUERY or None
+    if site.get('https_enabled') and site.get('https_port') == HTTPS_PORT and site.get('https_entry_query') == want_entry:
+        print(f'  https already enabled on {HTTPS_PORT} (entry gate {want_entry or "off"})')
         return
-    st, res = mutate('POST', f'/api/sites/{site_id()}/https/enable', {'https_port': HTTPS_PORT})
+    body = {'https_port': HTTPS_PORT, 'entry_query': ENTRY_QUERY}
+    st, res = mutate('POST', f'/api/sites/{site_id()}/https/enable', body)
     if not DRY and st != 200:
         die(f'https/enable {st}: {res} — nginx -t rejected, previous conf restored, http port untouched')
+    if not DRY and res and res.get('https_entry_query') != want_entry:
+        die(f'panel saved https without the entry gate (got {res.get("https_entry_query")!r}) — panel on {WM_URL} predates https_entry_query, update it first')
 
 
 def cmd_verify_https():
@@ -429,6 +437,26 @@ def cmd_verify_https():
     print(f'  http  :{SITE_PORT} -> {st}')
     if st != 200:
         die('old http port stopped serving — this must never happen in the pilot')
+    if ENTRY_QUERY:
+        def hget(path, dest):
+            req = urllib.request.Request(f'https://{SERVER_IP}:{HTTPS_PORT}{path}', headers={'Sec-Fetch-Dest': dest} if dest else {})
+            try:
+                with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+        checks = [
+            ('/', 'document', 403), (f'/?{ENTRY_QUERY}', 'document', 200), ('/index.html', 'document', 403),
+            ('/', '', 403), ('/index.html', 'empty', 200), ('/main.dart.js', 'script', 200), ('/nope', 'document', 404),
+        ]
+        bad = 0
+        for path, dest, want in checks:
+            got = hget(path, dest)
+            bad += got != want
+            print(f'  {"OK " if got == want else "BAD"} entry gate {path:24} dest={dest or "(none)":10} -> {got} (want {want})')
+        if bad:
+            die(f'{bad} entry-gate check(s) failed — https listener is not limited to /?{ENTRY_QUERY}')
+        print(f'  http :{SITE_PORT}/ still open without token: {http("GET", f"http://{SERVER_IP}:{SITE_PORT}/")[0]}')
     try:
         pem = subprocess.run(['openssl', 's_client', '-connect', f'{SERVER_IP}:{HTTPS_PORT}', '-servername', SERVER_IP],
                              input=b'', capture_output=True, timeout=15).stdout

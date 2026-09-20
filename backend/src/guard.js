@@ -193,6 +193,16 @@ function routeRewriteFrom(v) {
   return null;
 }
 
+// https_entry_query lands inside a nginx map regex and an `if` — keep it to
+// a bare token so it can never close the quote or add regex meta-characters.
+function entryQuery(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) return 'entry_query must be 1-64 letters, digits, _ or -';
+  return null;
+}
+
 module.exports = {
   adminOnly,
   siteName,
@@ -208,4 +218,5 @@ module.exports = {
   routePrefix,
   routeTarget,
   routeRewriteFrom,
+  entryQuery,
 };
