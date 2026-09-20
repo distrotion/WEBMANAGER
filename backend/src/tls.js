@@ -66,8 +66,9 @@ function ensureCa() {
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
   cert.setExtensions([
-    { name: 'basicConstraints', cA: true },
+    { name: 'basicConstraints', cA: true, critical: true },
     { name: 'keyUsage', keyCertSign: true, cRLSign: true, digitalSignature: true },
+    { name: 'subjectKeyIdentifier' },
   ]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
   fs.writeFileSync(CA_CERT, forge.pki.certificateToPem(cert));
@@ -99,10 +100,12 @@ function makeServerCert() {
   if (os.hostname() && !/\s/.test(os.hostname())) altNames.push({ type: 2, value: os.hostname() });
   for (const ip of localIps()) altNames.push({ type: 7, ip });
   cert.setExtensions([
-    { name: 'basicConstraints', cA: false },
+    { name: 'basicConstraints', cA: false, critical: true },
     { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
     { name: 'extKeyUsage', serverAuth: true },
     { name: 'subjectAltName', altNames },
+    { name: 'subjectKeyIdentifier' },
+    { name: 'authorityKeyIdentifier', keyIdentifier: ca.cert.generateSubjectKeyIdentifier().getBytes() },
   ]);
   cert.sign(ca.key, forge.md.sha256.create());
   fs.writeFileSync(SRV_CERT, forge.pki.certificateToPem(cert));
@@ -147,10 +150,12 @@ function issueCert(key, names) {
     /^\d{1,3}(\.\d{1,3}){3}$/.test(n) ? { type: 7, ip: n } : { type: 2, value: n }
   );
   cert.setExtensions([
-    { name: 'basicConstraints', cA: false },
+    { name: 'basicConstraints', cA: false, critical: true },
     { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
     { name: 'extKeyUsage', serverAuth: true },
     { name: 'subjectAltName', altNames },
+    { name: 'subjectKeyIdentifier' },
+    { name: 'authorityKeyIdentifier', keyIdentifier: ca.cert.generateSubjectKeyIdentifier().getBytes() },
   ]);
   cert.sign(ca.key, forge.md.sha256.create());
 
