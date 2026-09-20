@@ -1,5 +1,8 @@
 'use strict';
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+const config = require('../config');
 const db = require('../db');
 const ssl = require('../ssl');
 const tls = require('../tls');
@@ -32,6 +35,42 @@ router.post('/:id/ssl/disable', guard.adminOnly, (req, res) => {
     .disable(s, channel)
     .then(() => audit(req.user, 'ssl-disable', s.name))
     .catch((e) => require('../logbus').emitLog(channel, `[fatal] ${e.message}`));
+});
+
+// ---- local-CA server cert for an app that terminates TLS itself (node) ----
+// nginx never touches that port; the app reads the two files at start. They
+// live under certs/<site>/ — outside sites/<name>/ — so a redeploy can never
+// pull them out from under a running process. SAN = every local IP plus any
+// extra names the caller passes (a DNS name clients use, say).
+const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
+
+function certState(site) {
+  const dir = path.join(config.paths.certs, site.name);
+  const certPath = path.join(dir, 'fullchain.pem');
+  const keyPath = path.join(dir, 'privkey.pem');
+  return { exists: fs.existsSync(certPath) && fs.existsSync(keyPath), certPath, keyPath, caPath: tls.caCertPath() };
+}
+
+router.get('/:id/cert', guard.adminOnly, (req, res) => {
+  const s = getSite(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  res.json(certState(s));
+});
+
+router.post('/:id/cert/issue', guard.adminOnly, (req, res) => {
+  const s = getSite(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  const extra = Array.isArray(req.body && req.body.names) ? req.body.names.map((n) => String(n).trim()) : [];
+  const badName = extra.find((n) => !HOST_RE.test(n));
+  if (badName) return res.status(400).json({ error: `invalid name "${badName}"` });
+  const names = [...new Set([...tls.localIps().filter((ip) => ip !== '127.0.0.1'), ...extra, '127.0.0.1'])];
+  try {
+    tls.issueCert(s.name, names);
+  } catch (e) {
+    return res.status(400).json({ error: `cert issue failed: ${e.message}` });
+  }
+  audit(req.user, 'cert-issue', s.name, names.join(','));
+  res.json({ ...certState(s), names });
 });
 
 // ---- https on a site's own direct_port, second listener, local-CA cert ----
