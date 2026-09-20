@@ -36,6 +36,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -550,12 +551,56 @@ def cmd_ftp_close():
     print('  temp FTP user removed')
 
 
+def cmd_update():
+    """POST /api/system/update then follow it to the end: the panel restarts
+    itself, so /api/health going away and coming back with the new version IS
+    the success signal. Ends with the helper's own verdict from update/status."""
+    ref = ARGS[1] if len(ARGS) > 1 else 'main'
+    st, before = api('GET', '/api/system/update/status')
+    if st != 200:
+        die(f'update/status -> {st} {before} (panel too old for self-update? run update.cmd once by hand)')
+    print(f'  running {before.get("version")}   repoDir {before.get("repoDir")}   inFlight {before.get("inFlight")}')
+    st, r = mutate('POST', '/api/system/update', {'ref': ref})
+    if DRY:
+        return
+    if st != 202:
+        die(f'update refused: {r}')
+    target = r['target'][:7]
+    print(f'  helper launched: {r["from"]} -> {target}. waiting for the panel to come back...')
+    deadline = time.time() + 240
+    seen_down = False
+    while time.time() < deadline:
+        time.sleep(3)
+        st, _, raw = http('GET', f'{WM_URL}/api/health', timeout=4)
+        if st != 200:
+            seen_down = True
+            print('  panel down (restarting)')
+            continue
+        version = json.loads(raw).get('version', '')
+        print(f'  panel up: {version}')
+        if version.startswith(target):
+            break
+        if seen_down and version.startswith(r['from'][:7]):
+            print('  came back on the OLD version — helper rolled back')
+            break
+    global _token
+    _token = None  # tokens survive a restart (same JWT secret) but re-login is cheap and certain
+    st, after = api('GET', '/api/system/update/status')
+    state = (after or {}).get('state') or {}
+    print(f'  result: {state.get("status")}  step {state.get("step")}  error {state.get("error")}')
+    if state.get('status') != 'success':
+        st, log = api('GET', '/api/system/update/log?lines=40')
+        print(log if isinstance(log, str) else json.dumps(log))
+        die('self-update did not succeed — see above')
+    print('  OK. now run: sites-smoke check')
+
+
 COMMANDS = {
     'health': cmd_health, 'status': cmd_status, 'baseline': cmd_baseline,
     'ftp-open': cmd_ftp_open, 'backup': cmd_backup, 'routes': cmd_routes, 'verify-routes': cmd_verify_routes,
     'verify-build': cmd_verify_build,
     'https': cmd_https, 'verify-https': cmd_verify_https, 'diff': cmd_diff, 'ftp-close': cmd_ftp_close,
-    'sites-smoke': cmd_sites_smoke, 'ca': cmd_ca,
+    'sites-smoke': cmd_sites_smoke, 'ca': cmd_ca, 'update': cmd_update,
 }
 
 if __name__ == '__main__':

@@ -147,7 +147,8 @@ $envLines = @(
   "NSSM_EXE=$Root\tools\nssm.exe",
   "WACS_EXE=$Root\tools\win-acme\wacs.exe",
   "PM2_HOME=$Root\pm2",
-  "WM_VERSION=$WmVer"
+  "WM_VERSION=$WmVer",
+  "WM_REPO_DIR=$RepoDir"
 )
 Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 

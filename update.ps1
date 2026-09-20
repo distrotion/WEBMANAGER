@@ -65,8 +65,10 @@ try {
     $ver = "$($v.Trim()) ($(Get-Date -Format 'yyyy-MM-dd'))"
     $envFile = "$Root\app\backend\.env"
     if (Test-Path $envFile) {
-      $keep = Get-Content $envFile | Where-Object { $_ -notmatch '^WM_VERSION=' }
-      ($keep + "WM_VERSION=$ver") | Set-Content -Encoding ASCII $envFile
+      # WM_REPO_DIR tells the API-driven self-update (POST /api/system/update)
+      # which checkout to pull from — after this run no one needs the console.
+      $keep = Get-Content $envFile | Where-Object { $_ -notmatch '^WM_VERSION=' -and $_ -notmatch '^WM_REPO_DIR=' }
+      ($keep + "WM_VERSION=$ver" + "WM_REPO_DIR=$RepoDir") | Set-Content -Encoding ASCII $envFile
     }
   }
 } catch {}

@@ -164,4 +164,11 @@ audit   { who, action, target, time }
 - **เฟส 3:** SSL ผ่าน win-acme + ต่ออายุ + expiry
 - **เฟส 4:** release history + rollback 1 คลิก · audit log
 - **เฟส 5 (ขยาย):** node backend runtime (รองรับ BACK-QC-* เดิม)
+- **เฟส 6 (AI full control — `AI-FULL-CONTROL-PROMPT.md`):**
+  - 2.1 ✅ self-update ผ่าน API: `POST /api/system/update {ref}` → `src/selfupdate.js` (fetch/resolve ในโปรเซส, fail fast ก่อน downtime)
+    → helper นอกโปรเซส `scripts/selfupdate.ps1` ผ่าน Scheduled Task (NSSM ฆ่า tree ตอน stop) → backup `update\releases\<hash>-<stamp>`
+    → stop → robocopy → npm → stamp → start → health gate (200 + version ใหม่) → ไม่ผ่าน = rollback อัตโนมัติ · สถานะใน `update\state.json`
+    (`GET /api/system/update/status`) · lock = state + pid ของ helper (ตายกลางคัน >30 นาที = ปลดล็อก + รายงาน `interrupted`) · test `selfupdate.test.js`
+    รัน helper จริงบน pwsh (-Simulate) ทั้งเคสสำเร็จและ rollback · เครื่องต้องอัปเดตด้วยมือครั้งสุดท้าย 1 ครั้งเพื่อรับ `WM_REPO_DIR`
+  - 2.2 Fleet (รอเจ้าของตัดสิน #439) · 2.3 read-only files/nginx check/services API · 2.4 named commands · 2.5 .168
 ```

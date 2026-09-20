@@ -107,7 +107,15 @@ Open **http://\<server\>:8088** and sign in. It auto-starts on every reboot.
 - **SSL:** drop [win-acme](https://www.win-acme.com) into `C:\webmanager\tools\win-acme\`, then
   press **Issue SSL** on a site.
 - **Node-RED:** run `.\deploy\install-nodered.ps1 -Root C:\webmanager` once.
-- **Update:** `git pull` then **`.\update.cmd`** (light: swaps code + restarts). Use `setup.cmd` only for the first install or when adding nginx/services.
+- **Update (by hand):** `git pull` then **`.\update.cmd`** (light: swaps code + restarts). Use `setup.cmd` only for the first install or when adding nginx/services.
+- **Update (via API, no one at the console):** `POST /api/system/update {ref}` (admin). The panel fetches the checkout
+  recorded in `WM_REPO_DIR` (stamped by `update.cmd`, or `PUT /api/system/update/config {repoDir}`), hands the swap to an
+  out-of-process helper (`backend/scripts/selfupdate.ps1`, launched as a run-once Scheduled Task so NSSM's stop cannot kill it),
+  which backs up `app\backend` + `app\ui` to `update\releases\`, stops the service, copies, `npm install`, restarts, and
+  **health-gates**: `/api/health` must answer 200 with the new version within `healthTimeoutSec` (default 90) or it **rolls back**
+  to the backup. Progress/verdict: `GET /api/system/update/status` (`queued | running | success | rolled-back | failed | interrupted`),
+  `GET /api/system/update/log`. Never touches `.env`, `certs\`, `sites\`, `data\`. From a dev Mac: `scripts/https-pilot.py update [ref]`
+  then `sites-smoke check`. A machine needs one last manual `update.cmd` to receive this feature.
 
 ### Start / stop / uninstall
 ```powershell
@@ -281,7 +289,8 @@ Alternative if the machines are domain-joined: grant the server's **machine acco
 ## Project layout
 ```
 setup.cmd / setup.ps1   first-time Windows install (check + install + verify)
-update.cmd / update.ps1  quick update (swap code + restart, no reinstall)
+update.cmd / update.ps1  quick update (swap code + restart, no reinstall); stamps WM_REPO_DIR for API self-update
+backend/scripts/selfupdate.ps1  out-of-process self-update helper (backup → swap → health gate → rollback)
 backend/    Node/Express API - auth, users, git/local deploy, nginx config gen,
             firewall, PM2/NSSM process control, win-acme, WebSocket logs + shell (pty),
             autodeploy (CI/CD), fleet (hub/agent + proxy), gateway (TCP forward),
