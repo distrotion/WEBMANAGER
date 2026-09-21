@@ -162,3 +162,4 @@ error.log (14 Jul → 18 Sep): สะอาด — มีแค่ `[emerg] bind
 - `https/enable {https_port:7002, entry_query:"tabletnonscada"}` → `verify-https`: chain+SAN ผ่าน CA กลาง · entry gate 7/7 (`/` 403 · `/?tabletnonscada` 200 · `/index.html` 403 · curl 403 · SW prefetch 200 · asset 200 · `/nope` 404) · **http :7000 ยัง 200 ไม่มี token**
 - `verify-build`: https absolute 0 / relative 8 · http absolute 8 / relative 0 · http == repo `faa6e72` (CRLF-blind — Windows checkout autocrlf ทำให้ไฟล์บนเครื่องเป็น CRLF อยู่ก่อนแล้ว ไม่เกี่ยว gate) · **https == http + 8 swaps เป๊ะ**
 - ขั้น D: tablet ลง CA `http://172.23.10.32:8088/panel-ca.crt` → เปิด `https://172.23.10.32:7002/?tabletnonscada` → ยิง barcode ด้วยกล้อง → บันทึกผ่าน backend .34 จริง
+- เจ้าของยืนยัน 2026-09-21: https = แยกพอร์ต :7002 ออกจาก :7000 (ไม่ใช่ site แยก) · tablet = **Android + Chrome** (มี `BarcodeDetector`) · feature ที่ใช้ = หน้า NON-SCADA `/?tabletnonscada` (ไม่ต้องล็อกอิน)
