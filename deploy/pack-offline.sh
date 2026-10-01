@@ -57,6 +57,8 @@ file "$SQLITE_NODE" | grep "PE32+" >/dev/null || { echo "!! better_sqlite3.node 
 [ -d "$NM_BUILD/node_modules/fsevents" ] && { echo "!! fsevents (mac-only) slipped in"; exit 1; }
 rm -rf "$PKG/backend/node_modules"
 cp -R "$NM_BUILD/node_modules" "$PKG/backend/node_modules"
+# some registry tarballs ship stray dev folders (resolve@1.x publishes a .claude/) - never carry those
+find "$PKG/backend/node_modules" -type d -name ".claude" -prune -exec rm -rf {} +
 
 echo "[3/5] nginx $NGINX_VERSION + Node $NODE_VERSION installer"
 mkdir -p "$PKG/offline"
