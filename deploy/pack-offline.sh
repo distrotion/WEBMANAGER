@@ -51,7 +51,8 @@ cp backend/package.json backend/package-lock.json "$NM_BUILD/"
   npm_config_target="$NODE_TARGET" npm_config_runtime=node \
   npm ci --omit=dev --os=win32 --cpu=x64 --no-audit --no-fund )
 SQLITE_NODE="$NM_BUILD/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-file "$SQLITE_NODE" | grep -q "PE32+" || { echo "!! better_sqlite3.node is not a Windows binary"; file "$SQLITE_NODE"; exit 1; }
+# grep without -q: under pipefail an early-exiting grep kills the producer with SIGPIPE
+file "$SQLITE_NODE" | grep "PE32+" >/dev/null || { echo "!! better_sqlite3.node is not a Windows binary"; file "$SQLITE_NODE"; exit 1; }
 [ -d "$NM_BUILD/node_modules/node-pty/prebuilds/win32-x64" ] || { echo "!! node-pty has no win32-x64 prebuild"; exit 1; }
 [ -d "$NM_BUILD/node_modules/fsevents" ] && { echo "!! fsevents (mac-only) slipped in"; exit 1; }
 rm -rf "$PKG/backend/node_modules"
@@ -68,7 +69,7 @@ if [ ! -s "$NODE_MSI" ]; then
   ACTUAL="$(shasum -a 256 "$NODE_MSI" | awk '{print $1}')"
   [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || { echo "!! Node msi checksum mismatch"; rm -f "$NODE_MSI"; exit 1; }
 fi
-unzip -l "$NGINX_ZIP" | grep -q "nginx-$NGINX_VERSION/nginx.exe" || { echo "!! nginx zip has no nginx.exe"; exit 1; }
+unzip -l "$NGINX_ZIP" | grep "nginx-$NGINX_VERSION/nginx.exe" >/dev/null || { echo "!! nginx zip has no nginx.exe"; exit 1; }
 cp "$NGINX_ZIP" "$NODE_MSI" "$PKG/offline/"
 
 echo "[4/5] README"
