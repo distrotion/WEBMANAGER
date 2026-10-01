@@ -231,7 +231,12 @@ class _FtpPageState extends State<FtpPage> {
       child: ListTile(
         leading: Icon(enabled ? Icons.person : Icons.person_off, color: enabled ? Colors.greenAccent : Colors.white24),
         title: Text('${u['username']}', style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('${u['root_path']}', style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.white70)),
+        subtitle: Text(
+          '${u['root_path']}'
+          '${u['read_only'] == true ? '  ·  อ่านอย่างเดียว' : ''}'
+          '${u['unc'] == true ? '  ·  Network share' : ''}',
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.white70),
+        ),
         trailing: Wrap(spacing: 2, children: [
           IconButton(
             tooltip: 'เปิดดูโฟลเดอร์',
@@ -264,6 +269,7 @@ class _FtpUserDialogState extends State<_FtpUserDialog> {
   late final TextEditingController _root;
   final _pass = TextEditingController();
   bool _enabled = true;
+  bool _readOnly = false;
   bool _busy = false;
   bool _showPass = false;
   String? _error;
@@ -276,6 +282,7 @@ class _FtpUserDialogState extends State<_FtpUserDialog> {
     _username = TextEditingController(text: widget.user?['username']?.toString() ?? '');
     _root = TextEditingController(text: widget.user?['root_path']?.toString() ?? '');
     _enabled = widget.user?['enabled'] != false;
+    _readOnly = widget.user?['read_only'] == true;
   }
 
   @override
@@ -301,6 +308,7 @@ class _FtpUserDialogState extends State<_FtpUserDialog> {
         'username': _username.text.trim(),
         'root_path': _root.text.trim(),
         'enabled': _enabled,
+        'read_only': _readOnly,
         if (_pass.text.isNotEmpty) 'password': _pass.text,
       };
       if (_isEdit) {
@@ -331,13 +339,12 @@ class _FtpUserDialogState extends State<_FtpUserDialog> {
             const SizedBox(height: 10),
             TextField(
               controller: _root,
-              readOnly: true,
-              onTap: _pickFolder,
               decoration: InputDecoration(
                 labelText: 'โฟลเดอร์ที่ให้เข้าถึง (root)',
-                helperText: 'บัญชีนี้จะถูกจำกัดอยู่แค่ในโฟลเดอร์นี้ ออกไปข้างนอกไม่ได้',
-                helperMaxLines: 2,
-                suffixIcon: const Icon(Icons.folder_open),
+                hintText: r'C:\ISN01  หรือ  \\172.101.11.205\Data',
+                helperText: r'บัญชีนี้ถูกจำกัดอยู่ในโฟลเดอร์นี้ · UNC (\\server\share) ต้องมี credential ในหน้า Network share ก่อน · ห้ามโฟลเดอร์ระบบ/ฐานข้อมูล',
+                helperMaxLines: 3,
+                suffixIcon: IconButton(icon: const Icon(Icons.folder_open), tooltip: 'เลือกโฟลเดอร์บนเครื่องนี้', onPressed: _pickFolder),
               ),
             ),
             const SizedBox(height: 10),
@@ -356,6 +363,13 @@ class _FtpUserDialogState extends State<_FtpUserDialog> {
             Row(children: [
               Switch(value: _enabled, onChanged: (v) => setState(() => _enabled = v)),
               const Text('เปิดใช้งาน'),
+            ]),
+            Row(children: [
+              Switch(value: _readOnly, onChanged: (v) => setState(() => _readOnly = v)),
+              const Expanded(
+                child: Text('อ่านอย่างเดียว (list + download) — สำหรับเครื่องวัด/ระบบที่มาดึงไฟล์ ห้าม upload/ลบ/เปลี่ยนชื่อ',
+                    style: TextStyle(fontSize: 12)),
+              ),
             ]),
             if (_error != null) ...[
               const SizedBox(height: 6),

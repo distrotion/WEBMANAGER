@@ -81,6 +81,50 @@ function localPath(v, managerRoot) {
   return null;
 }
 
+// FTP account root: an absolute local folder (C:\ISN01) or a UNC share
+// (\\server\share[\sub]). Never a folder that holds the OS, a database or the
+// manager itself — an FTP account on C:\data\db would hand out (or, if
+// writable, corrupt) a MongoDB data directory. Exact-path checks are done by
+// the route (exists, is a directory, not a Mongo dir); this is the shape and
+// the deny list.
+const UNC_RE = /^\\\\[^\\/:*?"<>|\s]+\\[^\\/:*?"<>|]+(\\[^\\/:*?"<>|]*)*$/;
+const FTP_ROOT_DENY = [
+  [/^[a-z]:\\?$/, 'a drive root'],
+  [/^[a-z]:\\windows(\\|$)/, 'the Windows folder'],
+  [/^[a-z]:\\program files( \(x86\))?(\\|$)/, 'Program Files'],
+  [/^[a-z]:\\programdata(\\|$)/, 'ProgramData'],
+  [/^[a-z]:\\users\\?$/, 'the Users folder'],
+  [/^[a-z]:\\\$recycle\.bin(\\|$)/, 'the recycle bin'],
+  [/^[a-z]:\\system volume information(\\|$)/, 'System Volume Information'],
+  [/(^|\\)data\\db(\\|$)/, 'a MongoDB data directory (data\\db)'],
+];
+function ftpRoot(v, managerRoot) {
+  if (/[\r\n\0]/.test(String(v || ''))) return 'root_path may not contain newlines';
+  const s = String(v || '').trim();
+  if (!s) return 'root_path required';
+  // Windows-style paths are judged with path.win32 even on the dev Mac, so the
+  // deny list behaves the same everywhere the tests run.
+  const path = /^[A-Za-z]:/.test(s) || s.startsWith('\\\\') ? require('path').win32 : require('path');
+  const isUnc = s.startsWith('\\\\');
+  if (isUnc) {
+    if (!UNC_RE.test(s)) return 'UNC root must look like \\\\server\\share or \\\\server\\share\\folder';
+  } else if (!/^[A-Za-z]:[\\/]/.test(s) && !(process.platform !== 'win32' && s.startsWith('/'))) {
+    return 'root_path must be an absolute folder (C:\\folder) or a UNC share (\\\\server\\share)';
+  }
+  const norm = (isUnc ? s : path.normalize(s)).replace(/[\\/]+$/, '').toLowerCase();
+  for (const [re, what] of FTP_ROOT_DENY) {
+    if (re.test(norm) || re.test(norm + '\\')) return `root_path may not be ${what}`;
+  }
+  if (!isUnc && managerRoot) {
+    const root = path.resolve(managerRoot).toLowerCase().replace(/[\\/]+$/, '');
+    const cand = path.resolve(s).toLowerCase().replace(/[\\/]+$/, '');
+    if (cand === root || cand.startsWith(root + path.sep)) {
+      return 'root_path may not point inside the webmanager root (it holds the database and tokens)';
+    }
+  }
+  return null;
+}
+
 // subdomain / domain / path are interpolated into generated nginx directives.
 // A newline lets the value close the block and append arbitrary directives.
 function nginxField(v, label) {
@@ -210,6 +254,7 @@ module.exports = {
   branch,
   entryFile,
   localPath,
+  ftpRoot,
   nginxField,
   port,
   count,

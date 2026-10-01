@@ -9,6 +9,8 @@ const ftp = require('../ftp');
 const settings = require('../settings');
 const secretbox = require('../secretbox');
 const guard = require('../guard');
+const config = require('../config');
+const netshare = require('../netshare');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -48,6 +50,8 @@ const view = (u) => ({
   id: u.id,
   username: u.username,
   root_path: u.root_path,
+  read_only: !!u.read_only,
+  unc: ftp.isUnc(u.root_path),
   enabled: !!u.enabled,
   hasPassword: !!u.password_enc,
   created_at: u.created_at,
@@ -55,47 +59,74 @@ const view = (u) => ({
 
 router.get('/users', (req, res) => res.json(db.prepare('SELECT * FROM ftp_users ORDER BY username').all().map(view)));
 
-function validateUser(b, { requirePassword }) {
+// Files a MongoDB/WiredTiger data directory always contains — an account rooted
+// there could read or (if writable) corrupt the database. Checked by content,
+// not just by the C:\data\db naming convention in guard.ftpRoot.
+const DB_DIR_MARKERS = ['mongod.lock', 'WiredTiger', 'WiredTiger.wt', 'storage.bson'];
+function looksLikeDbDir(dir) {
+  return DB_DIR_MARKERS.some((f) => fs.existsSync(require('path').join(dir, f)));
+}
+
+async function validateUser(b, { requirePassword }) {
   const username = String(b.username || '').trim();
   const root = String(b.root_path || '').trim();
   if (!username || !root) return 'username และ root_path จำเป็น';
   if (!/^[A-Za-z0-9._-]{3,64}$/.test(username)) return 'username: ใช้ได้แค่ตัวอักษร/ตัวเลข/._- ยาว 3-64';
   if (requirePassword && !String(b.password || '')) return 'password required';
+  const shape = guard.ftpRoot(root, config.ROOT);
+  if (shape) return shape;
+  if (ftp.isUnc(root)) {
+    const share = ftp.shareFor(root);
+    if (!share) return `ไม่มี Network share ที่ครอบ ${root} — เพิ่ม credential ในหน้า Network share ก่อน`;
+    if (!netshare.isWindows()) return `UNC root ใช้ได้เฉพาะ Windows (เครื่องนี้คือ ${process.platform})`;
+    if (!(await netshare.reachable(root))) {
+      await netshare.reconcile('system', { force: true });
+      if (!(await netshare.reachable(root))) {
+        const st = netshare.status(share.id);
+        return `เปิด ${root} ไม่ได้${st && st.error ? ` — ${st.error}` : ''} (ตรวจ credential ในหน้า Network share)`;
+      }
+    }
+    return null;
+  }
   if (!fs.existsSync(root)) return `path ไม่มีอยู่จริง: ${root}`;
   if (!fs.statSync(root).isDirectory()) return `path ไม่ใช่โฟลเดอร์: ${root}`;
+  if (looksLikeDbDir(root)) return `path นี้เป็น data directory ของฐานข้อมูล (พบ ${DB_DIR_MARKERS.filter((f) => fs.existsSync(require('path').join(root, f))).join(', ')}) — ห้ามเปิดผ่าน FTP`;
   return null;
 }
 
-router.post('/users', (req, res) => {
+router.post('/users', async (req, res) => {
   const b = req.body || {};
-  const err = validateUser(b, { requirePassword: true });
+  const err = await validateUser(b, { requirePassword: true });
   if (err) return res.status(400).json({ error: err });
   let info;
   try {
     info = db
-      .prepare('INSERT INTO ftp_users (username, password_enc, root_path, enabled) VALUES (?,?,?,?)')
-      .run(String(b.username).trim(), secretbox.encrypt(b.password), String(b.root_path).trim(), b.enabled === false ? 0 : 1);
+      .prepare('INSERT INTO ftp_users (username, password_enc, root_path, enabled, read_only) VALUES (?,?,?,?,?)')
+      .run(String(b.username).trim(), secretbox.encrypt(b.password), String(b.root_path).trim(), b.enabled === false ? 0 : 1, b.read_only ? 1 : 0);
   } catch (e) {
     return res.status(400).json({ error: e.message.includes('UNIQUE') ? 'username นี้มีอยู่แล้ว' : e.message });
   }
   const row = db.prepare('SELECT * FROM ftp_users WHERE id=?').get(info.lastInsertRowid);
-  audit(req.user, 'ftp-user-create', row.username, row.root_path);
+  audit(req.user, 'ftp-user-create', row.username, `${row.root_path}${row.read_only ? ' (read-only)' : ''}`);
   res.status(201).json(view(row));
 });
 
-router.put('/users/:id', (req, res) => {
+router.put('/users/:id', async (req, res) => {
   const row = db.prepare('SELECT * FROM ftp_users WHERE id=?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   const b = req.body || {};
   const merged = { username: b.username ?? row.username, root_path: b.root_path ?? row.root_path };
-  const err = validateUser(merged, { requirePassword: false });
+  // disabling an account must always be possible, even if its root is now invalid
+  const onlyDisabling = Object.keys(b).every((k) => k === 'enabled') && b.enabled === false;
+  const err = onlyDisabling ? null : await validateUser(merged, { requirePassword: false });
   if (err) return res.status(400).json({ error: err });
   try {
-    db.prepare('UPDATE ftp_users SET username=?, root_path=?, password_enc=?, enabled=? WHERE id=?').run(
+    db.prepare('UPDATE ftp_users SET username=?, root_path=?, password_enc=?, enabled=?, read_only=? WHERE id=?').run(
       String(merged.username).trim(),
       String(merged.root_path).trim(),
       b.password ? secretbox.encrypt(b.password) : row.password_enc,
       'enabled' in b ? (b.enabled ? 1 : 0) : row.enabled,
+      'read_only' in b ? (b.read_only ? 1 : 0) : row.read_only,
       row.id
     );
   } catch (e) {

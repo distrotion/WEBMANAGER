@@ -9,11 +9,20 @@
 // Lazy-required like the DB monitor drivers (mssql/pg/mongodb): most installs
 // will never turn this on, so it must not cost anything at boot, and if the
 // package is ever missing this fails loud on enable, not silently at startup.
+const os = require('os');
+const path = require('path');
 const db = require('./db');
 const settings = require('./settings');
 const secretbox = require('./secretbox');
 const firewall = require('./firewall');
+const netshare = require('./netshare');
 const { emitLog } = require('./logbus');
+
+// Commands a read-only account never gets to run. Blacklisted per connection
+// (ftp-srv answers 502 before touching the file system) and refused again by
+// WmFileSystem below, so a client that talks around the command table still
+// cannot write.
+const WRITE_COMMANDS = ['STOR', 'APPE', 'STOU', 'DELE', 'RMD', 'MKD', 'RNFR', 'RNTO', 'ALLO', 'SITE'];
 
 let instance = null; // the live FtpSrv
 let instanceKey = null;
@@ -46,22 +55,168 @@ function firstLanIp() {
   return ips[0] || '127.0.0.1';
 }
 
+function ipToInt(ip) {
+  const p = String(ip).split('.').map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+}
+
+// The address a PASV reply tells the client to connect to. A box with several
+// NICs (e.g. 172.101.11.39 + 172.23.10.217) must advertise the one the client
+// can actually route to, so pick the interface whose subnet contains the
+// client; the configured pasv host is only the fallback for clients on no
+// local subnet (behind NAT). Loopback clients get loopback back.
+function pasvAddressFor(clientIp, fallback, interfaces = os.networkInterfaces()) {
+  const ip = String(clientIp || '').replace(/^::ffff:/, '');
+  if (/^127\./.test(ip)) return ip;
+  const c = ipToInt(ip);
+  if (c !== null) {
+    for (const list of Object.values(interfaces)) {
+      for (const i of list || []) {
+        if (i.family !== 'IPv4' && i.family !== 4) continue;
+        if (i.internal) continue;
+        const a = ipToInt(i.address);
+        const m = ipToInt(i.netmask);
+        if (a === null || m === null) continue;
+        if (((a & m) >>> 0) === ((c & m) >>> 0)) return i.address;
+      }
+    }
+  }
+  return fallback;
+}
+
 function key(c) {
   return [c.enabled, c.port, c.pasvMin, c.pasvMax, c.tls, c.pasvHost].join('|');
 }
 
-async function login({ username, password }, resolve, reject) {
+const isUnc = (p) => /^\\\\[^\\]+\\[^\\]+/.test(String(p || ''));
+
+// The Network share row whose unc_path covers this root (\\srv\Data covers
+// \\srv\Data\sub, not \\srv\Data2). The share's stored credential is what the
+// manager uses to open the UNC path — the service runs as LocalSystem and has
+// no credentials of its own for other machines.
+function shareFor(root) {
+  if (!isUnc(root)) return null;
+  const r = String(root).replace(/[\\/]+$/, '').toLowerCase();
+  let best = null;
+  for (const s of db.prepare('SELECT * FROM net_shares WHERE enabled=1').all()) {
+    const u = String(s.unc_path).replace(/[\\/]+$/, '').toLowerCase();
+    if (r === u || r.startsWith(u + '\\')) {
+      if (!best || u.length > best.unc_path.length) best = s;
+    }
+  }
+  return best;
+}
+
+// Make sure the share behind a UNC root is open before touching it. A quick
+// read check first; only when that fails is the credential replayed (through
+// netshare's own serialised, backed-off reconcile). Still unreadable = a clear
+// 550 with the real reason — never an empty listing.
+async function ensureShare(root) {
+  const share = shareFor(root);
+  if (!share) {
+    throw fsError(`no Network share credential covers ${root} — add it under Network share first`);
+  }
+  if (await netshare.reachable(root)) return share;
+  emitLog('system', `[ftp] ${share.unc_path} not readable — reconnecting`);
+  await netshare.reconcile('system', { force: true });
+  if (await netshare.reachable(root)) return share;
+  const st = netshare.status(share.id);
+  throw fsError(`network share ${share.unc_path} is not reachable${st && st.error ? ` — ${st.error}` : ''}`);
+}
+
+function fsError(message, code = 550) {
+  const { ftpErrors } = requireDriver();
+  return new ftpErrors.FileSystemError(message, code);
+}
+
+// ftp-srv's FileSystem, taught two things: a UNC root that may need its SMB
+// session (re)established before every operation, and read-only accounts.
+// Reads use fs.createReadStream, which on Windows opens with
+// FILE_SHARE_READ|WRITE|DELETE — an instrument that keeps rewriting DATA.csv
+// is never blocked by a download in progress.
+function makeFileSystem(connection, { root, readOnly }) {
+  const { FileSystem } = requireDriver();
+  const unc = isUnc(root);
+  class WmFileSystem extends FileSystem {
+    async _ready() {
+      if (unc) await ensureShare(root);
+    }
+    _denyWrite() {
+      throw fsError('this account is read-only (list and download only)', 550);
+    }
+    async get(fileName) {
+      await this._ready();
+      return super.get(fileName);
+    }
+    async list(p = '.') {
+      await this._ready();
+      return super.list(p);
+    }
+    async chdir(p = '.') {
+      await this._ready();
+      return super.chdir(p);
+    }
+    async read(fileName, opts) {
+      await this._ready();
+      return super.read(fileName, opts);
+    }
+    async write(fileName, opts) {
+      if (readOnly) this._denyWrite();
+      await this._ready();
+      return super.write(fileName, opts);
+    }
+    async delete(p) {
+      if (readOnly) this._denyWrite();
+      await this._ready();
+      return super.delete(p);
+    }
+    async mkdir(p) {
+      if (readOnly) this._denyWrite();
+      await this._ready();
+      return super.mkdir(p);
+    }
+    async rename(from, to) {
+      if (readOnly) this._denyWrite();
+      await this._ready();
+      return super.rename(from, to);
+    }
+    async chmod(p, mode) {
+      if (readOnly) this._denyWrite();
+      await this._ready();
+      return super.chmod(p, mode);
+    }
+  }
+  return new WmFileSystem(connection, { root });
+}
+
+async function login({ connection, username, password }, resolve, reject) {
   const row = db.prepare('SELECT * FROM ftp_users WHERE username=? AND enabled=1').get(username);
   if (!row) return reject(new Error('Invalid username or password'));
   const real = secretbox.decrypt(row.password_enc);
   if (real === null || real !== password) return reject(new Error('Invalid username or password'));
-  const fs = require('fs');
-  if (!fs.existsSync(row.root_path) || !fs.statSync(row.root_path).isDirectory()) {
-    emitLog('system', `[ftp] "${username}" root_path ไม่มีอยู่จริง: ${row.root_path}`);
-    return reject(new Error('server misconfiguration — ask an admin'));
+  const root = row.root_path;
+  const readOnly = !!row.read_only;
+  if (isUnc(root)) {
+    try {
+      await ensureShare(root);
+    } catch (e) {
+      emitLog('system', `[ftp] "${username}": ${e.message}`);
+      return reject(new Error(e.message));
+    }
+  } else {
+    const fs = require('fs');
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+      emitLog('system', `[ftp] "${username}" root_path ไม่มีอยู่จริง: ${root}`);
+      return reject(new Error('server misconfiguration — ask an admin'));
+    }
   }
-  emitLog('system', `[ftp] "${username}" logged in`);
-  resolve({ root: row.root_path });
+  emitLog('system', `[ftp] "${username}" logged in${readOnly ? ' (read-only)' : ''}${isUnc(root) ? ` via share ${root}` : ''}`);
+  resolve({
+    root,
+    fs: makeFileSystem(connection, { root, readOnly }),
+    blacklist: readOnly ? WRITE_COMMANDS : [],
+  });
 }
 
 async function stopInstance() {
@@ -84,7 +239,7 @@ async function startInstance(c) {
   const { FtpSrv } = requireDriver();
   const opts = {
     url: `ftp://0.0.0.0:${c.port}`,
-    pasv_url: c.pasvHost,
+    pasv_url: (clientIp) => pasvAddressFor(clientIp, c.pasvHost),
     pasv_min: c.pasvMin,
     pasv_max: c.pasvMax,
     anonymous: false,
@@ -156,6 +311,9 @@ function status() {
     pasvMax: c.pasvMax,
     tls: c.tls,
     pasvHost: c.pasvHost,
+    // every non-loopback IPv4 this box has — PASV advertises the one on the
+    // client's subnet, pasvHost only when no interface matches
+    pasvAddresses: require('./tls').localIps().filter((ip) => ip !== '127.0.0.1'),
     userCount: db.prepare('SELECT COUNT(*) n FROM ftp_users').get().n,
   };
 }
@@ -164,4 +322,4 @@ function start() {
   reconcile().catch((e) => emitLog('system', `[ftp] เริ่มไม่สำเร็จ: ${e.message}`));
 }
 
-module.exports = { start, reconcile, restart, status };
+module.exports = { start, reconcile, restart, status, shareFor, isUnc, pasvAddressFor, WRITE_COMMANDS };

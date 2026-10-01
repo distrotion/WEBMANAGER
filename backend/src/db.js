@@ -334,6 +334,12 @@ const MIGRATIONS = {
   gateways: [
     ['ftp_mode', 'INTEGER NOT NULL DEFAULT 0'],
   ],
+  ftp_users: [
+    // 1 = list + download only (measuring instruments export files that this
+    // account must never be able to delete or overwrite). Enforced twice: the
+    // write commands are blacklisted per connection AND the FileSystem refuses.
+    ['read_only', 'INTEGER NOT NULL DEFAULT 0'],
+  ],
   proxy_routes: [
     // Absolute base URL (http(s)://host[:port]/) that the site's HTTPS
     // listener rewrites to `<path_prefix>/` inside served JS/HTML via
