@@ -7,10 +7,20 @@
 param(
   [string]$Root = "C:\webmanager",
   [string]$AdminPass = "admin1234",
-  [int]$Port = 8088
+  [int]$Port = 8088,
+  # Node 22 installer to use instead of downloading (offline package puts one in offline\)
+  [string]$NodeMsi = ""
 )
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Offline package (deploy\pack-offline.sh): offline\node-v22*-x64.msi + offline\nginx-*.zip,
+# VERSION file, prebuilt backend\node_modules. No Git, no internet needed.
+$offlineDir = Join-Path $here "offline"
+$offline = (Test-Path (Join-Path $here "VERSION")) -and (Test-Path "$here\backend\node_modules\better-sqlite3\build\Release\better_sqlite3.node")
+if (-not $NodeMsi -and (Test-Path $offlineDir)) {
+  $m = Get-ChildItem "$offlineDir\node-v22*-x64.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($m) { $NodeMsi = $m.FullName }
+}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Line($ok, $label, $detail) {
@@ -25,13 +35,14 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
   Write-Host "Requesting administrator rights..." -ForegroundColor Cyan
   $a = "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -Root `"$Root`" -AdminPass `"$AdminPass`" -Port $Port"
+  if ($NodeMsi) { $a += " -NodeMsi `"$NodeMsi`"" }
   Start-Process powershell $a -Verb RunAs
   exit
 }
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  WEBMANAGER setup   root=$Root  port=$Port" -ForegroundColor Cyan
+Write-Host "  WEBMANAGER setup   root=$Root  port=$Port$(if ($offline) { '  (offline package)' })" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "System check:"
@@ -42,11 +53,11 @@ $nodeMaj = 0
 if ($node) { $v = (& node -v); if ($v -match '^v(\d+)') { $nodeMaj = [int]$Matches[1] } }
 $nodeOk = ($nodeMaj -ge 18 -and $nodeMaj -le 22)
 if ($node) { Line $nodeOk "Node.js" ($v + $(if ($nodeMaj -ge 23) { "  (23+ risky - 22 LTS recommended)" } elseif (-not $nodeOk) { "  (need 18-22)" } else { "" })) }
-else { Line $false "Node.js" "not found - will auto-install v22 LTS" }
+else { Line $false "Node.js" $(if ($NodeMsi) { "not found - will install from $(Split-Path -Leaf $NodeMsi)" } else { "not found - will auto-install v22 LTS" }) }
 
 # Git
 $git = Get-Command git -ErrorAction SilentlyContinue
-Line ([bool]$git) "Git" $(if ($git) { (& git --version) } else { "not found - install git-scm.com" })
+Line ([bool]$git -or $offline) "Git" $(if ($git) { (& git --version) } elseif ($offline) { "not found - not needed for an offline package" } else { "not found - install git-scm.com" })
 
 # Writable drive
 $driveOk = $false
@@ -59,12 +70,14 @@ Line $nssmBundled "nssm" $(if ($nssmBundled) { "bundled in repo" } else { "missi
 
 # nginx
 $nginxHave = Test-Path "$Root\nginx\nginx.exe"
-Line $true "nginx" $(if ($nginxHave) { "present at $Root\nginx" } else { "will auto-download" })
+$nginxZip = if (Test-Path $offlineDir) { Get-ChildItem "$offlineDir\nginx-*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
+Line $true "nginx" $(if ($nginxHave) { "present at $Root\nginx" } elseif ($nginxZip) { "from package $($nginxZip.Name)" } else { "will auto-download" })
+if ($offline) { Line $true "node_modules" "bundled (win32-x64, Node 22) - npm not needed" }
 
 Write-Host ""
 
 # --- fix prerequisites ---
-if (-not $git) { Fail "Git is required. Install from https://git-scm.com then re-run." }
+if (-not $git -and -not $offline) { Fail "Git is required. Install from https://git-scm.com then re-run." }
 if (-not $driveOk) { Fail "$Root is not writable. Re-run setup with a writable drive (default C:\webmanager)." }
 
 # install/upgrade to Node 22 LTS when missing or too old (< 18). Node 23+ can't be
@@ -73,11 +86,16 @@ if ((-not $node) -or ($nodeMaj -lt 18)) {
   $why = if (-not $node) { "not installed" } else { "v$nodeMaj too old" }
   Write-Host "Installing Node.js 22 LTS ($why) ..." -ForegroundColor Cyan
   try {
-    $idx = Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/" -UseBasicParsing
-    $msi = ([regex]::Match($idx.Content, 'node-v22\.[0-9.]+-x64\.msi')).Value
-    if (-not $msi) { throw "MSI name not found" }
-    $out = "$env:TEMP\$msi"
-    Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/$msi" -OutFile $out -UseBasicParsing
+    if ($NodeMsi) {
+      if (-not (Test-Path $NodeMsi)) { throw "Node installer not found: $NodeMsi" }
+      $out = $NodeMsi
+    } else {
+      $idx = Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/" -UseBasicParsing
+      $msi = ([regex]::Match($idx.Content, 'node-v22\.[0-9.]+-x64\.msi')).Value
+      if (-not $msi) { throw "MSI name not found" }
+      $out = "$env:TEMP\$msi"
+      Invoke-WebRequest "https://nodejs.org/dist/latest-v22.x/$msi" -OutFile $out -UseBasicParsing
+    }
     Start-Process msiexec.exe -ArgumentList "/i `"$out`" /qn /norestart" -Wait
     $env:Path = "$env:ProgramFiles\nodejs;$env:Path"
     $nv2 = (& "$env:ProgramFiles\nodejs\node.exe" -v)
@@ -93,7 +111,7 @@ if ((-not $node) -or ($nodeMaj -lt 18)) {
 
 # --- install ---
 Write-Host ""
-Write-Host "Installing WEBMANAGER (this downloads nginx + npm deps, ~1-2 min)..." -ForegroundColor Cyan
+Write-Host $(if ($offline) { "Installing WEBMANAGER from the offline package (no downloads)..." } else { "Installing WEBMANAGER (this downloads nginx + npm deps, ~1-2 min)..." }) -ForegroundColor Cyan
 & (Join-Path $here "deploy\install.ps1") -Root $Root -AdminPass $AdminPass -ManagerPort $Port
 
 # --- verify it actually runs ---

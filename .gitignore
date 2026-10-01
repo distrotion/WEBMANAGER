@@ -19,3 +19,8 @@ webmanager-dev/
 
 # Per-machine agent session state (hub ids, timestamps)
 .claude/
+
+# offline package build output (deploy/pack-offline.sh)
+dist/
+offline/
+VERSION

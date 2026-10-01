@@ -20,6 +20,10 @@ if (-not $isAdmin) {
   exit
 }
 $RepoDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Offline package (deploy\pack-offline.sh): no .git, a VERSION file, and a prebuilt
+# win32-x64 backend\node_modules -> copy deps instead of npm install, version from file.
+$VersionFile = Join-Path $RepoDir "VERSION"
+$BundledNodeModules = Test-Path "$RepoDir\backend\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
 
 if (-not (Test-Path "$Root\app\backend\src\server.js")) {
   Bad "not installed yet ($Root\app\backend missing) - run setup.cmd first (initial install)"
@@ -49,6 +53,10 @@ Start-Sleep -Seconds 2
 # 3. copy backend code + built UI. Keep node_modules and the generated .env.
 Info "copying backend + UI"
 robocopy "$RepoDir\backend" "$Root\app\backend" /MIR /XD node_modules /XF .env /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($BundledNodeModules) {
+  Info "copying bundled node_modules (offline package)"
+  robocopy "$RepoDir\backend\node_modules" "$Root\app\backend\node_modules" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+}
 if (Test-Path "$RepoDir\ui\build\web\index.html") {
   robocopy "$RepoDir\ui\build\web" "$Root\app\ui\build\web" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
 } else {
@@ -57,19 +65,27 @@ if (Test-Path "$RepoDir\ui\build\web\index.html") {
 
 # 4. install any NEW dependencies (fast no-op if nothing changed). node npm-cli.js
 #    directly avoids the npm.ps1 shim that mangles args on some Windows hosts.
-Info "npm install (deps)"
-$NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
-if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
-Push-Location "$Root\app\backend"
-& $NodeExe (Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js") install --omit=dev
-if ($LASTEXITCODE -ne 0) { Pop-Location; Bad "npm install failed - see output above"; Read-Host "Press Enter"; exit 1 }
-Pop-Location
+if ($BundledNodeModules) {
+  Info "npm install skipped (bundled node_modules)"
+} else {
+  Info "npm install (deps)"
+  $NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+  if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
+  Push-Location "$Root\app\backend"
+  & $NodeExe (Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js") install --omit=dev
+  if ($LASTEXITCODE -ne 0) { Pop-Location; Bad "npm install failed - see output above"; Read-Host "Press Enter"; exit 1 }
+  Pop-Location
+}
 
 # 5. re-stamp WM_VERSION in .env so the UI shows the new build
 try {
-  $v = & git -C $RepoDir rev-parse --short HEAD 2>$null
-  if ($LASTEXITCODE -eq 0 -and $v) {
-    $ver = "$($v.Trim()) ($(Get-Date -Format 'yyyy-MM-dd'))"
+  $ver = $null
+  if ((Test-Path "$RepoDir\.git") -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    $v = & git -C $RepoDir rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $v) { $ver = "$($v.Trim()) ($(Get-Date -Format 'yyyy-MM-dd'))" }
+  }
+  if (-not $ver -and (Test-Path $VersionFile)) { $ver = (Get-Content $VersionFile -First 1).Trim() }
+  if ($ver) {
     $envFile = "$Root\app\backend\.env"
     if (Test-Path $envFile) {
       # WM_REPO_DIR tells the API-driven self-update (POST /api/system/update)

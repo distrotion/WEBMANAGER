@@ -32,7 +32,12 @@ param(
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot),
   [int]$ManagerPort = 8088,
   [string]$AdminPass = "admin1234",
-  [string]$JwtSecret = ""
+  [string]$JwtSecret = "",
+  # Offline package (deploy\pack-offline.sh): nginx zip to extract instead of
+  # downloading, and bundled backend\node_modules to copy instead of npm install.
+  # Both are auto-detected from the package layout; the switches force them.
+  [string]$NginxZip = "",
+  [switch]$SkipNpm
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,8 +56,27 @@ if ($nodeVer -match '^v(\d+)') {
   if ($maj -lt 18) { Die "Node $nodeVer is too old for native modules. Install Node 22 LTS (or run setup.cmd which does it for you)." }
   if ($maj -ge 23) { Warn "Node $nodeVer may break native modules (better-sqlite3/node-pty). Node 22 LTS recommended." }
 }
+# --- offline package detection -----------------------------------------------
+# pack-offline.sh lays the package out as <RepoDir>\offline\{nginx-*.zip,node-*.msi},
+# <RepoDir>\VERSION and a prebuilt win32-x64 <RepoDir>\backend\node_modules.
+$OfflineDir = Join-Path $RepoDir "offline"
+$VersionFile = Join-Path $RepoDir "VERSION"
+$BundledNodeModules = Test-Path "$RepoDir\backend\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+if (-not $NginxZip -and (Test-Path $OfflineDir)) {
+  $z = Get-ChildItem "$OfflineDir\nginx-*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($z) { $NginxZip = $z.FullName }
+}
+if ($BundledNodeModules -and -not $SkipNpm) { $SkipNpm = $true }
+if ($SkipNpm -and -not $BundledNodeModules) { Die "-SkipNpm given but $RepoDir\backend\node_modules has no win32 better-sqlite3 build - nothing to copy." }
+if ($SkipNpm) { Info "offline package: bundled node_modules found, npm install will be skipped" }
+if ($NginxZip) { Info "offline package: nginx will be extracted from $NginxZip" }
+
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Die "Git not found on PATH. Install from https://git-scm.com then re-run."
+  if (Test-Path $VersionFile) {
+    Warn "Git not found - offline package, version taken from VERSION file (API self-update needs Git; use update.cmd with a new package instead)"
+  } else {
+    Die "Git not found on PATH. Install from https://git-scm.com then re-run."
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($JwtSecret)) {
@@ -90,10 +114,16 @@ if (-not (Test-Path "$Root\tools\nssm.exe")) {
 # nginx: auto-download the Windows build if missing
 if (-not (Test-Path "$Root\nginx\nginx.exe")) {
   $nginxVer = $env:NGINX_VERSION; if ([string]::IsNullOrWhiteSpace($nginxVer)) { $nginxVer = "1.28.0" }
-  Info "downloading nginx $nginxVer ..."
   try {
-    $tmp = "$env:TEMP\wm-nginx.zip"
-    Invoke-WebRequest "https://nginx.org/download/nginx-$nginxVer.zip" -OutFile $tmp -UseBasicParsing
+    if ($NginxZip) {
+      $tmp = $NginxZip
+      if ($NginxZip -match 'nginx-([0-9.]+)\.zip$') { $nginxVer = $Matches[1] }
+      Info "extracting nginx $nginxVer from package ..."
+    } else {
+      Info "downloading nginx $nginxVer ..."
+      $tmp = "$env:TEMP\wm-nginx.zip"
+      Invoke-WebRequest "https://nginx.org/download/nginx-$nginxVer.zip" -OutFile $tmp -UseBasicParsing
+    }
     $ex = "$env:TEMP\wm-nginx-x"
     if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
     Expand-Archive $tmp $ex -Force
@@ -119,6 +149,11 @@ foreach ($svcName in @('nginx', 'wm-manager')) {
 
 Info "copying backend from $RepoDir\backend"
 robocopy "$RepoDir\backend" "$Root\app\backend" /MIR /XD node_modules /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($SkipNpm) {
+  # prebuilt win32-x64 deps shipped with the package (no npm, no internet)
+  Info "copying bundled node_modules"
+  robocopy "$RepoDir\backend\node_modules" "$Root\app\backend\node_modules" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+}
 if (Test-Path "$RepoDir\ui\build\web\index.html") {
   Info "copying built UI"
   robocopy "$RepoDir\ui\build\web" "$Root\app\ui\build\web" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
@@ -131,9 +166,15 @@ Info "writing backend\.env"
 # Stamp the repo's git hash + date so the UI can show which build this server runs.
 $WmVer = 'unknown'
 try {
-  $v = & git -C $RepoDir rev-parse --short HEAD 2>$null
-  if ($LASTEXITCODE -eq 0 -and $v) { $WmVer = "$v".Trim() + " (" + (Get-Date -Format 'yyyy-MM-dd') + ")" }
+  if (Get-Command git -ErrorAction SilentlyContinue) {
+    $v = & git -C $RepoDir rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $v) { $WmVer = "$v".Trim() + " (" + (Get-Date -Format 'yyyy-MM-dd') + ")" }
+  }
 } catch {}
+if ($WmVer -eq 'unknown' -and (Test-Path $VersionFile)) {
+  # written by pack-offline.sh: "<hash> (<build date>)"
+  $WmVer = (Get-Content $VersionFile -First 1).Trim()
+}
 # Built as an array (not a here-string) so it parses under any line ending.
 $envLines = @(
   "WEBMANAGER_ROOT=$Root",
@@ -152,25 +193,29 @@ $envLines = @(
 )
 Set-Content -Encoding ASCII -Path "$Root\app\backend\.env" -Value $envLines
 
-Info "npm install (backend)"
-# drop stale native modules so npm re-fetches prebuilts matching the CURRENT node
-# (e.g. after a node upgrade) instead of a broken/mismatched build.
-foreach ($nm in @("better-sqlite3", "node-pty")) {
-  $p = "$Root\app\backend\node_modules\$nm"
-  if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
-}
-Push-Location "$Root\app\backend"
-# Invoke npm as `node npm-cli.js` directly: the npm.ps1 shim that ships with new
-# Node mangles arguments under some PowerShell hosts ('Unknown command: "pm"').
-$NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
-if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
-$NpmCli = Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js"
-& $NodeExe $NpmCli install --omit=dev
-if ($LASTEXITCODE -ne 0) {
+if ($SkipNpm) {
+  Info "npm install skipped (bundled node_modules, built for win32-x64 / Node 22)"
+} else {
+  Info "npm install (backend)"
+  # drop stale native modules so npm re-fetches prebuilts matching the CURRENT node
+  # (e.g. after a node upgrade) instead of a broken/mismatched build.
+  foreach ($nm in @("better-sqlite3", "node-pty")) {
+    $p = "$Root\app\backend\node_modules\$nm"
+    if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  Push-Location "$Root\app\backend"
+  # Invoke npm as `node npm-cli.js` directly: the npm.ps1 shim that ships with new
+  # Node mangles arguments under some PowerShell hosts ('Unknown command: "pm"').
+  $NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+  if (-not $NodeExe) { $NodeExe = "$env:ProgramFiles\nodejs\node.exe" }
+  $NpmCli = Join-Path (Split-Path $NodeExe) "node_modules\npm\bin\npm-cli.js"
+  & $NodeExe $NpmCli install --omit=dev
+  if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    Die "npm install failed. Usually means Node is not 22 LTS (native prebuild missing). Install Node 22 LTS and re-run."
+  }
   Pop-Location
-  Die "npm install failed. Usually means Node is not 22 LTS (native prebuild missing). Install Node 22 LTS and re-run."
 }
-Pop-Location
 
 # 4. nginx.conf -------------------------------------------------------------
 # NOTE: the manager GENERATES nginx\conf\nginx.conf (absolute paths, both config
