@@ -53,3 +53,13 @@ NODE_VERSION=22.18.0 ./deploy/pack-offline.sh # bundle a different Node 22 msi
 
 Output: `dist/webmanager-offline-<hash>.zip` (~130 MB). `dist/`, `offline/` and `VERSION`
 are git-ignored. Downloads are cached in `dist/cache/`.
+
+## Machine already runs an old Node-RED (1.x) — read before setup
+
+Installing Node 22 breaks Node-RED 1.x at startup (`Error: spawn EINVAL` from
+`@node-red/registry/lib/installer.js`): Node ≥ 18.20/20.12/22 refuses to spawn `npm.cmd`
+without `shell:true` (CVE-2024-27980) and Node 22 has no revert flag. Fix (offline, as the
+user that runs Node-RED, no admin): run `deploy\nodered-node22-fix\fix-nodered-node22.cmd`
+— patches the three `npm.cmd` calls to `shell:true`, backs up `installer.js.bak-node22`,
+`node --check`s the result and starts Node-RED once to prove it. Seen 2026-10-01 on the
+`automation` PC (Node-RED 1.2.6, ReportService).
